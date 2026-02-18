@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:wiki.faforever.com)",
+      "WebFetch(domain:forum.faforever.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:forums.faforever.com)",
+      "WebFetch(domain:supcom.fandom.com)",
+      "Bash(git fetch:*)",
+      "Bash(powershell -ExecutionPolicy Bypass -File .specify/scripts/powershell/create-new-feature.ps1 -Json -ShortName \"supcom-llm-ai-bot\" -Number 1 \"AI bot for Supreme Commander Forged Alliance with LLM integration for strategy and chat\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -PathsOnly)",
+      "Bash(powershell -ExecutionPolicy Bypass -File .specify/scripts/powershell/setup-plan.ps1 -Json)"
+    ]
+  }
+}
