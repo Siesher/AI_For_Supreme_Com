@@ -1,10 +1,11 @@
-<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=0:C4B5FD,50:818CF8,100:6366F1&height=220&section=header&text=%F0%9F%8E%AE%20SupCom%20LLM%20AI%20Bot&fontSize=36&fontColor=E0E7FF&fontAlignY=35&desc=Local%20LLM-powered%20AI%20for%20Supreme%20Commander%3A%20Forged%20Alliance&descSize=14&descColor=C4B5FD&descAlignY=55&animation=fadeIn"/>
-
 <div align="center">
 
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=500&size=16&duration=3000&pause=1500&color=C4B5FD&center=true&vCenter=true&repeat=true&width=650&height=40&lines=%C2%ABThe+best+strategy+is+the+one+your+enemy+never+expected.%C2%BB" alt="Quote" />
+<!-- Banner -->
+<img src="figures/banner.svg" alt="SupCom LLM AI Bot Banner" width="100%" />
 
-<br>
+# SupCom LLM AI Bot
+
+*«Лучшая стратегия — та, которую враг не ожидал.»*
 
 **Локальная LLM-управляемая ИИ для Supreme Commander: Forged Alliance через [FAForever](https://www.faforever.com/)**
 

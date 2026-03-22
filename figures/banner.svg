@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0e1a;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#1a1035;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0a0e1a;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#818CF8;stop-opacity:0" />
+      <stop offset="50%" style="stop-color:#C4B5FD;stop-opacity:0.6" />
+      <stop offset="100%" style="stop-color:#818CF8;stop-opacity:0" />
+    </linearGradient>
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#C4B5FD" />
+      <stop offset="50%" style="stop-color:#E9D5FF" />
+      <stop offset="100%" style="stop-color:#C4B5FD" />
+    </linearGradient>
+    <linearGradient id="gridGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#818CF8;stop-opacity:0.08" />
+      <stop offset="100%" style="stop-color:#818CF8;stop-opacity:0" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="300" fill="url(#bg)" rx="12"/>
+
+  <!-- Strategic grid overlay -->
+  <g opacity="0.06" stroke="#818CF8" stroke-width="0.5">
+    <line x1="0" y1="60" x2="1200" y2="60"/>
+    <line x1="0" y1="120" x2="1200" y2="120"/>
+    <line x1="0" y1="180" x2="1200" y2="180"/>
+    <line x1="0" y1="240" x2="1200" y2="240"/>
+    <line x1="200" y1="0" x2="200" y2="300"/>
+    <line x1="400" y1="0" x2="400" y2="300"/>
+    <line x1="600" y1="0" x2="600" y2="300"/>
+    <line x1="800" y1="0" x2="800" y2="300"/>
+    <line x1="1000" y1="0" x2="1000" y2="300"/>
+  </g>
+
+  <!-- Decorative particles (stars / units) -->
+  <circle cx="80" cy="60" r="2" fill="#C4B5FD" opacity="0.4"/>
+  <circle cx="180" cy="220" r="1.5" fill="#818CF8" opacity="0.3"/>
+  <circle cx="320" cy="40" r="1" fill="#E9D5FF" opacity="0.5"/>
+  <circle cx="480" cy="250" r="2" fill="#C4B5FD" opacity="0.3"/>
+  <circle cx="720" cy="55" r="1.5" fill="#818CF8" opacity="0.4"/>
+  <circle cx="870" cy="230" r="1" fill="#E9D5FF" opacity="0.3"/>
+  <circle cx="960" cy="90" r="2" fill="#C4B5FD" opacity="0.4"/>
+  <circle cx="1070" cy="190" r="1.5" fill="#818CF8" opacity="0.3"/>
+  <circle cx="1120" cy="50" r="1" fill="#E9D5FF" opacity="0.5"/>
+  <circle cx="140" cy="260" r="1" fill="#C4B5FD" opacity="0.3"/>
+  <circle cx="560" cy="270" r="1.5" fill="#818CF8" opacity="0.2"/>
+  <circle cx="640" cy="35" r="2" fill="#E9D5FF" opacity="0.3"/>
+
+  <!-- Strategic hex (left) -->
+  <g transform="translate(130, 150)" opacity="0.12">
+    <polygon points="0,-55 47.6,-27.5 47.6,27.5 0,55 -47.6,27.5 -47.6,-27.5" fill="none" stroke="#C4B5FD" stroke-width="0.8"/>
+    <polygon points="0,-38 32.9,-19 32.9,19 0,38 -32.9,19 -32.9,-19" fill="none" stroke="#818CF8" stroke-width="0.5"/>
+    <polygon points="0,-20 17.3,-10 17.3,10 0,20 -17.3,10 -17.3,-10" fill="none" stroke="#E9D5FF" stroke-width="0.5"/>
+    <circle cx="0" cy="0" r="4" fill="#C4B5FD" opacity="0.3"/>
+  </g>
+
+  <!-- Strategic hex (right) -->
+  <g transform="translate(1070, 150)" opacity="0.12">
+    <polygon points="0,-55 47.6,-27.5 47.6,27.5 0,55 -47.6,27.5 -47.6,-27.5" fill="none" stroke="#C4B5FD" stroke-width="0.8"/>
+    <polygon points="0,-38 32.9,-19 32.9,19 0,38 -32.9,19 -32.9,-19" fill="none" stroke="#818CF8" stroke-width="0.5"/>
+    <polygon points="0,-20 17.3,-10 17.3,10 0,20 -17.3,10 -17.3,-10" fill="none" stroke="#E9D5FF" stroke-width="0.5"/>
+    <circle cx="0" cy="0" r="4" fill="#C4B5FD" opacity="0.3"/>
+  </g>
+
+  <!-- Neural network / AI brain icon (center top) -->
+  <g transform="translate(600, 75)" filter="url(#softGlow)" opacity="0.7">
+    <!-- Central node -->
+    <circle cx="0" cy="0" r="6" fill="#C4B5FD" opacity="0.5"/>
+    <!-- Layer 1 nodes -->
+    <circle cx="-25" cy="-15" r="3" fill="#818CF8" opacity="0.6"/>
+    <circle cx="25" cy="-15" r="3" fill="#818CF8" opacity="0.6"/>
+    <circle cx="-25" cy="15" r="3" fill="#818CF8" opacity="0.6"/>
+    <circle cx="25" cy="15" r="3" fill="#818CF8" opacity="0.6"/>
+    <!-- Layer 2 nodes -->
+    <circle cx="-45" cy="0" r="2" fill="#E9D5FF" opacity="0.4"/>
+    <circle cx="45" cy="0" r="2" fill="#E9D5FF" opacity="0.4"/>
+    <circle cx="0" cy="-25" r="2" fill="#E9D5FF" opacity="0.4"/>
+    <circle cx="0" cy="25" r="2" fill="#E9D5FF" opacity="0.4"/>
+    <!-- Connections -->
+    <line x1="0" y1="0" x2="-25" y2="-15" stroke="#C4B5FD" stroke-width="0.5" opacity="0.4"/>
+    <line x1="0" y1="0" x2="25" y2="-15" stroke="#C4B5FD" stroke-width="0.5" opacity="0.4"/>
+    <line x1="0" y1="0" x2="-25" y2="15" stroke="#C4B5FD" stroke-width="0.5" opacity="0.4"/>
+    <line x1="0" y1="0" x2="25" y2="15" stroke="#C4B5FD" stroke-width="0.5" opacity="0.4"/>
+    <line x1="-25" y1="-15" x2="-45" y2="0" stroke="#818CF8" stroke-width="0.5" opacity="0.3"/>
+    <line x1="25" y1="-15" x2="45" y2="0" stroke="#818CF8" stroke-width="0.5" opacity="0.3"/>
+    <line x1="-25" y1="-15" x2="0" y2="-25" stroke="#818CF8" stroke-width="0.5" opacity="0.3"/>
+    <line x1="25" y1="-15" x2="0" y2="-25" stroke="#818CF8" stroke-width="0.5" opacity="0.3"/>
+    <line x1="-25" y1="15" x2="-45" y2="0" stroke="#818CF8" stroke-width="0.5" opacity="0.3"/>
+    <line x1="25" y1="15" x2="45" y2="0" stroke="#818CF8" stroke-width="0.5" opacity="0.3"/>
+    <line x1="-25" y1="15" x2="0" y2="25" stroke="#818CF8" stroke-width="0.5" opacity="0.3"/>
+    <line x1="25" y1="15" x2="0" y2="25" stroke="#818CF8" stroke-width="0.5" opacity="0.3"/>
+  </g>
+
+  <!-- Accent line bottom -->
+  <rect x="0" y="282" width="1200" height="2" fill="url(#accent)"/>
+
+  <!-- Main title -->
+  <text x="600" y="158" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="52" font-weight="300" fill="url(#textGrad)" letter-spacing="8" filter="url(#glow)">
+    SupCom LLM AI Bot
+  </text>
+
+  <!-- Subtitle -->
+  <text x="600" y="198" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#A78BFA" letter-spacing="4" opacity="0.8">
+    LOCAL  LLM-POWERED  AI  FOR  SUPREME  COMMANDER
+  </text>
+
+  <!-- Tagline -->
+  <text x="600" y="238" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#818CF8" letter-spacing="2" opacity="0.5" font-style="italic">
+    Reflex Layer  ·  Qwen3.5 (9B / 4B)  ·  Named Pipe IPC  ·  FAForever
+  </text>
+</svg>
