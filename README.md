@@ -1,247 +1,300 @@
-# SupCom LLM AI Bot
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=0:C4B5FD,50:818CF8,100:6366F1&height=220&section=header&text=%F0%9F%8E%AE%20SupCom%20LLM%20AI%20Bot&fontSize=36&fontColor=E0E7FF&fontAlignY=35&desc=Local%20LLM-powered%20AI%20for%20Supreme%20Commander%3A%20Forged%20Alliance&descSize=14&descColor=C4B5FD&descAlignY=55&animation=fadeIn"/>
 
-> Local LLM-powered AI opponent & ally for **Supreme Commander: Forged Alliance** via [FAForever](https://www.faforever.com/).
+<div align="center">
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
-[![Lua 5.0](https://img.shields.io/badge/lua-5.0_(SupCom)-yellow.svg)]()
-[![C++17](https://img.shields.io/badge/C%2B%2B-17_(i686)-red.svg)]()
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=500&size=16&duration=3000&pause=1500&color=C4B5FD&center=true&vCenter=true&repeat=true&width=650&height=40&lines=%C2%ABThe+best+strategy+is+the+one+your+enemy+never+expected.%C2%BB" alt="Quote" />
 
----
+<br>
 
-## Overview
+**Локальная LLM-управляемая ИИ для Supreme Commander: Forged Alliance через [FAForever](https://www.faforever.com/)**
 
-A three-layer AI system that runs entirely on your local machine — no cloud APIs, no internet required during gameplay. The bot plays as a UEF ally, making strategic decisions through a combination of instant reflexes and LLM reasoning.
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12+-818CF8?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Qwen3.5](https://img.shields.io/badge/Qwen3.5-9B%20%2F%204B-C4B5FD?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co/Qwen)
+[![C++17](https://img.shields.io/badge/C%2B%2B17-i686_(32--bit)-6366F1?style=for-the-badge&logo=cplusplus&logoColor=white)]()
+[![Lua 5.0](https://img.shields.io/badge/Lua-5.0_(SupCom)-000080?style=for-the-badge&logo=lua&logoColor=white)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-C4B5FD?style=for-the-badge)](LICENSE)
 
-| Layer | Mechanism | Latency | Trigger |
-|-------|-----------|---------|---------|
-| **Reflex** | Pure Lua rules (AllyMonitor + ReflexLayer) | < 1s | Immediate threats |
-| **Fast LLM** | Qwen3.5-4B via Ollama | ~3-5s | Periodic / ally events |
-| **Deep LLM** | Qwen3.5-9B via Ollama | ~7-10s | Strategic decisions |
+[Быстрый старт](#-быстрый-старт) · [Архитектура](#-архитектура) · [Reflex Layer](#-reflex-layer) · [LLM Pipeline](#-llm-decision-pipeline) · [DLL Bridge](#-dll-bridge)
 
-### How It Works
-
-```
-  SupCom:FA (32-bit)              Python Bridge Server
-  +-----------------+             +-------------------+
-  | Lua AI Brain    |   Named     | State Processor   |
-  | GameState ------+---Pipe----->| Prompt Builder    |
-  | Collector       |   (IPC)     | LLM Router ------>| Ollama (local)
-  |                 |             |   4B / 9B         |
-  | Strategy  <-----+---Pipe-----| Command Builder   |
-  | Executor        |             | Fallback Strategy |
-  +-----------------+             +-------------------+
-```
-
-**IPC**: Windows Named Pipe `\\.\pipe\supcom_llm_bridge` with 4-byte LE length-prefix framing.
+</div>
 
 ---
 
-## Project Structure
+## ✦ О проекте
+
+Трёхслойная ИИ-система, которая полностью работает на вашей машине — без облачных API, без интернета во время игры. Бот играет за UEF (союзник), принимая стратегические решения через комбинацию мгновенных рефлексов и LLM-рассуждений.
+
+<table>
+<tr>
+<td width="50%">
+
+**Три слоя принятия решений**
+- **Reflex** — чистый Lua, < 1с, мгновенные угрозы
+- **Fast LLM** — Qwen3.5-4B, ~3-5с, рутинные решения
+- **Deep LLM** — Qwen3.5-9B, ~7-10с, стратегические решения
+
+</td>
+<td width="50%">
+
+**Ключевые особенности**
+- Никаких облаков — всё локально через Ollama
+- Named Pipe IPC с lock-free очередями
+- DLL-инъекция с thread-safe `lua_sethook`
+- Rule-based fallback при недоступности LLM
+- Debug overlay (Ctrl+Shift+D) в игре
+
+</td>
+</tr>
+</table>
+
+---
+
+## ✦ Архитектура
+
+```
+    SupCom:FA (32-bit)                    Python Bridge Server
+    ┌─────────────────────┐               ┌───────────────────────┐
+    │  Lua AI Brain       │   Named       │  State Processor      │
+    │  ┌───────────────┐  │   Pipe        │  ┌─────────────────┐  │
+    │  │ GameState     │──┼───(IPC)──────>│  │ Prompt Builder  │  │
+    │  │ Collector     │  │               │  └────────┬────────┘  │
+    │  └───────────────┘  │               │           │           │
+    │                     │               │  ┌────────▼────────┐  │
+    │  ┌───────────────┐  │               │  │   LLM Router    │  │
+    │  │ Strategy   <──┼──┼───(IPC)──────<│  │  4B fast / 9B   │──┼──> Ollama
+    │  │ Executor      │  │               │  └────────┬────────┘  │   (local)
+    │  └───────────────┘  │               │           │           │
+    │                     │               │  ┌────────▼────────┐  │
+    │  ┌───────────────┐  │               │  │ Command Builder │  │
+    │  │ Reflex Layer  │  │  (no LLM)     │  │ + Fallback      │  │
+    │  │ < 1s response │  │               │  └─────────────────┘  │
+    │  └───────────────┘  │               │                       │
+    └─────────────────────┘               └───────────────────────┘
+```
+
+**IPC**: Windows Named Pipe `\\.\pipe\supcom_llm_bridge` — 4-byte LE length-prefix + UTF-8 JSON.
+
+---
+
+## ✦ Reflex Layer
+
+Чистый Lua — мгновенная реакция без LLM:
+
+| Условие | Действие | Кулдаун |
+|:--------|:---------|:--------|
+| Воздушная угроза базы > 15 | Поднять перехватчики | 20 тиков |
+| Угроза базе > 30 | Отправить наземную поддержку | 20 тиков |
+| Армия теряется быстро (< 60%) | Подкрепление | 20 тиков |
+| Союзник столлит масс + свой > 300 | Поделиться массой | 20 тиков |
+
+Кулдауны по сложности: easy=40, normal=20, hard=5 тиков.
+
+---
+
+## ✦ LLM Decision Pipeline
+
+```
+    GameStateCollector          StateProcessor          LLMRouter
+    ┌──────────────┐           ┌──────────────┐       ┌──────────────┐
+    │  Resources   │           │  Structured  │       │  Trigger     │
+    │  Units       │──────────>│  Prompt +    │──────>│  Severity    │
+    │  Threats     │           │  Game Context│       │  → 4B / 9B   │
+    │  Map Control │           └──────────────┘       └──────┬───────┘
+    └──────────────┘                                         │
+                                                             ▼
+    StrategyExecutor           CommandBuilder          Ollama API
+    ┌──────────────┐           ┌──────────────┐       ┌──────────────┐
+    │  Decision →  │<──────────│  Validate    │<──────│  think: false│
+    │  Game Cmds   │           │  JSON schema │       │  Qwen3.5     │
+    └──────────────┘           └──────────────┘       └──────────────┘
+```
+
+**Fallback**: после 3 таймаутов 9B весь трафик автоматически маршрутизируется на 4B. При полной недоступности LLM — rule-based стратегия.
+
+---
+
+## ✦ DLL Bridge
+
+C++ DLL соединяет 32-bit Lua 5.0 VM движка SupCom и Python-сервер:
+
+| Характеристика | Реализация |
+|:---------------|:-----------|
+| **Зависимости** | Только KERNEL32.dll + msvcrt.dll |
+| **Thread Safety** | `lua_sethook` — хук срабатывает в потоке FA |
+| **IPC** | `InterlockedExchange`-based lock-free очереди |
+| **Lua API** | Direct function pointers к абсолютным адресам FA |
+| **Инъекция** | `CreateRemoteThread` + `LoadLibraryA` через inject.exe |
+
+```cpp
+// lua_api_direct.h — вызовы Lua C API через указатели на адреса FA
+static inline void lua_pushstring(lua_State* L, const char* s) {
+    typedef void (*fn_t)(lua_State*, const char*);
+    ((fn_t)0x90cdf0)(L, s);  // FA address, no ASLR (2007 game)
+}
+```
+
+---
+
+## ✦ Структура проекта
 
 ```
 AI_For_Supreme_Com/
-├── bridge/                    # C++ DLL — game ↔ Python bridge
+├── bridge/                        # C++ DLL — game <-> Python
 │   ├── src/
-│   │   ├── pipe_client.cpp    # Named Pipe client (pure Win32 API)
-│   │   ├── lua_bridge.cpp     # LLMBridge.* Lua function registration
-│   │   ├── lua_injector.cpp   # Thread-safe Lua VM hook injection
-│   │   ├── lua_api_direct.h   # Direct fn-ptr calls to FA addresses
-│   │   └── dllmain.cpp        # DLL entry point
-│   ├── inject.c               # 32-bit DLL injector (CreateRemoteThread)
-│   └── CMakeLists.txt         # MinGW GCC i686 build
+│   │   ├── pipe_client.cpp        #   Named Pipe (pure Win32 API)
+│   │   ├── lua_bridge.cpp         #   LLMBridge.* регистрация
+│   │   ├── lua_injector.cpp       #   Thread-safe lua_sethook
+│   │   └── lua_api_direct.h       #   Direct fn-ptr к адресам FA
+│   ├── inject.c                   #   32-bit DLL инжектор
+│   └── CMakeLists.txt             #   MinGW GCC i686
 │
-├── server/                    # Python asyncio bridge server
-│   ├── bridge_server.py       # Entry point — pipe server + process watcher
-│   ├── pipe_server.py         # Named Pipe server (async)
-│   ├── state_processor.py     # Game state → LLM prompt builder
-│   ├── llm_client.py          # Ollama HTTP client (think: false)
-│   ├── llm_router.py          # Model selection (4B fast / 9B deep)
-│   ├── command_builder.py     # LLM response → validated commands
-│   ├── fallback_strategy.py   # Rule-based fallback when LLM unavailable
-│   ├── decision_logger.py     # JSONL decision audit log
-│   └── config.py              # Configuration loader
+├── server/                        # Python asyncio bridge
+│   ├── bridge_server.py           #   Entry point + process watcher
+│   ├── llm_client.py              #   Ollama HTTP (think: false)
+│   ├── llm_router.py              #   Роутинг 4B / 9B
+│   ├── state_processor.py         #   Game state -> prompt
+│   ├── command_builder.py         #   LLM response -> commands
+│   └── fallback_strategy.py       #   Rule-based fallback
 │
-├── mod/                       # FAF SIM mod (game logic)
-│   ├── mod_info.lua           # Mod descriptor
-│   ├── hook/lua/
-│   │   ├── aibrains/index.lua # AI brain registration
-│   │   └── ui/lobby/aitypes.lua
-│   └── lua/AI/
-│       ├── LLMAIBrain.lua     # Main brain — threads + decision loop
-│       ├── GameStateCollector.lua  # Snapshot assembler
-│       ├── LLMBridge.lua      # DLL wrapper with offline fallback
-│       ├── BuildOrderUEF.lua  # Build order templates
-│       ├── EconomyManager.lua # Economy / engineer management
-│       ├── StrategyExecutor.lua   # Decision → game commands
-│       ├── TacticalMicro.lua  # Unit micro coroutine
-│       ├── ChatHandler.lua    # In-game chat integration
-│       ├── AllyMonitor.lua    # Ally state reader
-│       ├── ReflexLayer.lua    # Instant reflex actions
-│       ├── TerritoryManager.lua   # Build zone restriction
-│       └── JSON.lua           # Lua 5.0 JSON encoder/decoder
+├── mod/                           # FAF SIM мод
+│   ├── lua/AI/
+│   │   ├── LLMAIBrain.lua         #   Главный мозг + потоки
+│   │   ├── LLMBridge.lua          #   DLL wrapper + offline mode
+│   │   ├── GameStateCollector.lua  #   Сбор игрового состояния
+│   │   ├── StrategyExecutor.lua   #   Решения -> команды
+│   │   ├── ReflexLayer.lua        #   Мгновенные рефлексы
+│   │   ├── EconomyManager.lua     #   Экономика / инженеры
+│   │   └── JSON.lua               #   Lua 5.0 JSON codec
+│   └── hook/lua/                  #   FAF hooks
 │
-├── mod-ui/                    # FAF UI mod (lobby dropdown)
-│   ├── mod_info.lua
-│   └── hook/lua/ui/lobby/aitypes.lua
-│
-├── installer/                 # User-facing setup
-│   ├── config.json            # Default configuration
-│   ├── install.ps1            # Guided installer
-│   └── start_bridge.ps1       # Bridge launcher
-│
-├── tests/                     # Test suite
-│   ├── unit/                  # Unit tests (state_processor, router, etc.)
-│   └── integration/           # Pipe roundtrip smoke tests
-│
-└── specs/                     # Design documents
-    └── 001-supcom-llm-ai-bot/
-        ├── spec.md            # Feature specification
-        ├── plan.md            # Implementation plan
-        ├── tasks.md           # Task breakdown
-        ├── contracts/         # IPC protocol contracts
-        └── data-model.md     # Data model reference
+├── mod-ui/                        # FAF UI мод (lobby dropdown)
+├── installer/                     # Скрипты установки
+├── tests/                         # Unit + integration тесты
+└── specs/                         # Спецификации и контракты
 ```
 
 ---
 
-## Requirements
+## ✦ Требования
 
-| Component | Version | Notes |
-|-----------|---------|-------|
+| Компонент | Версия | Примечание |
+|:----------|:-------|:-----------|
 | **Python** | 3.12+ | Bridge server |
-| **Ollama** | latest | Local LLM inference |
-| **MSYS2 MinGW32** | GCC i686 | DLL compilation (SupCom is 32-bit) |
-| **FAForever** | latest | Game client & mod platform |
-| **SupCom: Forged Alliance** | Steam | Base game |
-| **VRAM** | 6+ GB | For Qwen3.5-9B (Q4_K_M) |
+| **Ollama** | latest | Локальный LLM inference |
+| **MSYS2 MinGW32** | GCC i686 | DLL компиляция (SupCom — 32-bit) |
+| **FAForever** | latest | Игровой клиент |
+| **SupCom: FA** | Steam | Базовая игра |
+| **VRAM** | 6+ GB | Для Qwen3.5-9B (Q4_K_M) |
 
-### LLM Models
+### LLM модели
 
-| Tag | Size | VRAM | Purpose |
-|-----|------|------|---------|
-| `qwen3.5:9b` | Q4_K_M | ~5.5 GB | Deep strategic reasoning |
-| `qwen3.5:4b` | Q4_K_M | ~2.5 GB | Fast routine decisions |
+| Тег | Размер | VRAM | Назначение |
+|:----|:-------|:-----|:-----------|
+| `qwen3.5:9b` | Q4_K_M | ~5.5 GB | Глубокие стратегические решения |
+| `qwen3.5:4b` | Q4_K_M | ~2.5 GB | Быстрые рутинные решения |
 
 ---
 
-## Quick Start
+## ✦ Быстрый старт
 
-### 1. Install Models
+### 1. Установка моделей
 
 ```bash
 ollama pull qwen3.5:9b
 ollama pull qwen3.5:4b
 ```
 
-### 2. Build the DLL
+### 2. Сборка DLL
 
 ```bash
-# In MSYS2 MinGW32 shell:
+# В MSYS2 MinGW32 shell:
 cd bridge
 cmake -B build_cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
 cmake --build build_cmake
 # Output: bridge/build/supcom_llm_bridge.dll
 ```
 
-### 3. Install the Mod
+### 3. Установка мода
 
 ```powershell
-# Run the guided installer:
+# Guided installer:
 powershell -File installer/install.ps1
 
-# Or manually copy:
+# Или вручную:
 Copy-Item -Recurse mod/* "C:\FAFData\mods\supcom-llm-ai-bot\"
 Copy-Item -Recurse mod-ui/* "C:\FAFData\mods\supcom-llm-ai-bot-ui\"
-Copy-Item bridge/build/supcom_llm_bridge.dll "C:\ProgramData\FAForever\bin\llm_bridge.dll"
-Copy-Item bridge/build/inject.exe "C:\ProgramData\FAForever\bin\inject.exe"
+Copy-Item bridge\build\supcom_llm_bridge.dll "C:\ProgramData\FAForever\bin\llm_bridge.dll"
+Copy-Item bridge\build\inject.exe "C:\ProgramData\FAForever\bin\inject.exe"
 ```
 
-### 4. Run
+### 4. Запуск
 
 ```powershell
-# Terminal 1 — Start Ollama (if not already running):
+# Terminal 1 — Ollama:
 ollama serve
 
-# Terminal 2 — Start bridge server:
+# Terminal 2 — Bridge server:
 python server/bridge_server.py --config installer/config.json
 
-# Terminal 3 — Launch FAF, enable both mods, add "LLM AI Bot (UEF)", play!
+# Terminal 3 — FAF: включить оба мода, добавить "LLM AI Bot (UEF)", играть!
 ```
 
 ---
 
-## Architecture Details
+## ✦ Отладка
 
-### Reflex Layer (< 1s response)
-
-Pure Lua — no LLM involved. Handles emergencies:
-
-| Condition | Action | Cooldown |
-|-----------|--------|----------|
-| Air threat near base > 15 | Scramble interceptors | 20 ticks |
-| Base threat > 30 | Send ground support | 20 ticks |
-| Army losing fast (< 60%) | Send army support | 20 ticks |
-| Ally mass stall + own > 300 | Share mass | 20 ticks |
-
-### LLM Decision Pipeline
-
-1. **GameStateCollector** assembles a snapshot (resources, units, threats, map control)
-2. **StateProcessor** builds a structured prompt with game context
-3. **LLMRouter** selects 4B or 9B model based on trigger severity
-4. **LLMClient** queries Ollama with `think: false` (no chain-of-thought overhead)
-5. **CommandBuilder** validates JSON response against allowed actions
-6. **StrategyExecutor** translates decisions into game commands
-
-### DLL Bridge
-
-The C++ DLL bridges SupCom's 32-bit Lua 5.0 VM and the Python server:
-
-- **No external dependencies** — only KERNEL32.dll and msvcrt.dll
-- **Thread-safe injection** via `lua_sethook` (hook fires in FA's Lua thread)
-- **Lock-free IPC** — `InterlockedExchange`-based single-slot queues
-- **Direct function pointers** to FA's Lua C API (no linker script needed)
-
-### Fallback Strategy
-
-When the LLM is unavailable (Ollama down, 3+ timeouts), the bot falls back to rule-based decisions covering expansion, defense, and basic army management.
+| Лог | Путь |
+|:----|:-----|
+| **Decision log** | `%ProgramData%\FAForever\logs\llm_ai_decisions.log` |
+| **Injection log** | `%ProgramData%\FAForever\logs\llm_inject.log` |
+| **Game log** | `%APPDATA%\Forged Alliance Forever\logs\game_*.log` |
+| **In-game overlay** | `Ctrl+Shift+D` (UI мод) |
 
 ---
 
-## Development
+## ✦ Ограничения движка
 
-### Run Tests
+| Ограничение | Решение |
+|:------------|:--------|
+| **Lua 5.0** — нет `#`, нет `goto` | `table.getn()`, `table.insert()`, `continue` |
+| **32-bit DLL** — только MinGW i686 | CMakeLists + `-m32` flags |
+| **ASCII paths** — движок 2007 года | `C:\FAFData` вместо Документов |
+| **No ASLR** — фиксированные адреса | Direct fn-ptr в `lua_api_direct.h` |
+| **Qwen3.5 thinking** | `"think": false` в Ollama API |
+
+---
+
+## ✦ Разработка
 
 ```bash
+# Тесты
 uv run pytest -v
-```
 
-### Lint & Format
-
-```bash
+# Линтер
 uv run ruff check .
 uv run ruff format .
 ```
 
-### Debug
+---
 
-- **Decision log**: `%ProgramData%\FAForever\logs\llm_ai_decisions.log`
-- **Injection log**: `%ProgramData%\FAForever\logs\llm_inject.log`
-- **Game log**: `%APPDATA%\Forged Alliance Forever\logs\game_*.log`
-- **In-game overlay**: `Ctrl+Shift+D` (when UI mod is active)
+## ✦ Лицензия
+
+[MIT License](LICENSE) — свободно используйте, форкайте, дорабатывайте.
 
 ---
 
-## Key Constraints
+<div align="center">
 
-- **Lua 5.0** — no `#`, no `goto`, use `table.getn()` and `table.insert()`
-- **32-bit DLL** — must be compiled with MinGW GCC i686, not MSVC
-- **ASCII paths** — FAF vault path must avoid Cyrillic and OneDrive reparse points
-- **No ASLR** — FA (2007) uses fixed addresses; DLL calls FA functions via absolute pointers
-- **`/no_think` deprecated** — use Ollama API `"think": false` for Qwen3.5
+<br>
 
----
+**Сухацкий Максим** · МГТУ им. Н.Э. Баумана (Калужский филиал) · 2025–2026
 
-## License
+[![GitHub](https://img.shields.io/badge/GitHub-Siesher-818CF8?style=flat-square&logo=github)](https://github.com/Siesher)
 
-MIT
+<br>
+
+*🎮 «Лучшая стратегия — та, которую враг не ожидал.»*
+
+</div>
+
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=0:6366F1,50:818CF8,100:C4B5FD&height=100&section=footer"/>
