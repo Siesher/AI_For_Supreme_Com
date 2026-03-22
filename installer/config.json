@@ -1,0 +1,37 @@
+{
+  "_comment": "SupCom:FA LLM AI Bot — Configuration File",
+  "_models": {
+    "primary": "qwen3.5:9b — deep strategic decisions",
+    "fast": "qwen3.5:4b — fast/routine decisions"
+  },
+  "llm": {
+    "model_deep": "qwen3.5:9b",
+    "model_fast": "qwen3.5:4b",
+    "base_url": "http://localhost:11434",
+    "temperature": 0.3,
+    "max_tokens": 256
+  },
+  "game": {
+    "game_path": "C:\\Program Files (x86)\\Supreme Commander",
+    "faf_mods_path": "%APPDATA%\\FAForever\\mods",
+    "faction": "UEF"
+  },
+  "bot": {
+    "difficulty": "normal",
+    "playstyle": "balanced",
+    "chat_enabled": true,
+    "chat_language": "auto",
+    "poll_interval_fast_s": 20,
+    "poll_interval_deep_s": 60
+  },
+  "bridge": {
+    "pipe_name": "\\\\.\\pipe\\supcom_llm_bridge",
+    "timeout_s": 10
+  },
+  "debug": {
+    "overlay_enabled": true,
+    "log_enabled": true,
+    "log_path": "%ProgramData%\\FAForever\\logs\\llm_ai_decisions.log"
+  },
+  "version": "1.0.0"
+}

@@ -45,18 +45,21 @@ The player can communicate with the AI bot through the game's built-in chat syst
 
 ### User Story 3 - AI Bot Plays as an Allied Teammate (Priority: P2)
 
-The player launches a team game (e.g., 2v2 or 3v3) with the AI bot as an ally against AI or human opponents. The bot coordinates with the player: shares resources when asked, avoids building in the player's territory, responds to strategic requests, and focuses on complementary strategies (e.g., if the player goes air, the bot focuses on land).
+The player launches a team game (e.g., 2v2 or 3v3) with the AI bot as an ally against AI or human opponents. The bot behaves like a human teammate: it instantly reacts to immediate threats (interceptors scramble within seconds when enemy bombers approach the player's base), proactively monitors the player's situation without being asked, shares resources automatically when the player is stalling, coordinates attacks, and communicates its actions in natural language. The bot does not wait to be told — it observes and reacts.
 
 **Why this priority**: Playing as an ally requires all P1 capabilities plus coordination logic, making it a natural extension. Same priority as chat since both enhance the core experience in different ways.
 
-**Independent Test**: Can be tested by starting a 2v2 game with the bot as ally and observing coordination behavior. Delivers a cooperative gameplay experience.
+**Independent Test**: Can be tested by starting a 2v2 game with the bot as ally and observing coordination behavior. Delivers a cooperative gameplay experience indistinguishable from a human teammate.
 
 **Acceptance Scenarios**:
 
 1. **Given** a team game with the bot as ally, **When** the game starts, **Then** the bot builds its base without encroaching on the player's expansion areas
-2. **Given** the bot is an ally, **When** the player requests "send me mass" via chat, **Then** the bot shares mass resources if it has surplus
-3. **Given** the bot is an ally, **When** the player is being attacked, **Then** the bot sends reinforcements to assist the player's defense
-4. **Given** a team game, **When** the bot observes the player's army composition, **Then** it adjusts its own production to complement (avoids duplicating the same unit types excessively)
+2. **Given** the bot is an ally, **When** the player requests "send me mass" via chat, **Then** the bot shares mass resources within 2 seconds (no LLM wait)
+3. **Given** the bot is an ally, **When** enemy air units are detected within 500 units of the player's base, **Then** the bot redirects its interceptors to intercept within 3 seconds — without the player asking
+4. **Given** the bot is an ally, **When** the player's base is under ground attack, **Then** the bot sends the nearest available army units to assist within 5 seconds
+5. **Given** a team game, **When** the bot observes the player's army composition, **Then** it adjusts its own production to complement (avoids duplicating the same unit types excessively)
+6. **Given** the bot reacts to a threat, **When** it redirects forces, **Then** it proactively notifies the player via chat (e.g., "Вижу авиацию у твоей базы — перехватчики уже летят")
+7. **Given** the player's mass income drops below 3/s for 30 seconds, **When** the bot has mass surplus > 300, **Then** it automatically shares mass without being asked
 
 ---
 
@@ -129,6 +132,11 @@ The player can configure the AI bot's difficulty level and preferred playstyle b
 - **FR-011**: The system MUST allow configuration of bot difficulty level and playstyle preferences before game start
 - **FR-012**: The system MUST be compatible with standard Supreme Commander: Forged Alliance maps (with and without AI markers)
 - **FR-013**: As an ally, the bot MUST coordinate with the player by avoiding building in the player's territory and responding to resource sharing requests
+- **FR-018**: The system MUST implement a three-layer response architecture: (1) Reflex Layer — pure Lua rules that react to ally threats within 3 seconds with no LLM involvement; (2) Fast LLM Layer — Qwen3-4B-2507 for chat responses and routine decisions (~3-5 sec); (3) Deep LLM Layer — Qwen3-8B for complex strategic reasoning (~7-10 sec)
+- **FR-019**: The system MUST continuously monitor the ally player's situation (air threats, base threat, army losses, economy stall) and react proactively without waiting for the player to ask
+- **FR-020**: The Reflex Layer MUST respond to the following triggers within 3 seconds with no LLM involvement: enemy air units near ally base → scramble interceptors; ally base ground threat > threshold → redirect nearest army; ally mass stall for 30s AND own surplus > 300 → share mass automatically
+- **FR-021**: The LLM routing system MUST select the appropriate model based on request complexity: simple/time-sensitive requests use Qwen3-4B-2507; complex strategic decisions and game phase changes use Qwen3-8B
+- **FR-022**: The baseline LLM polling interval MUST be reduced to 15-20 seconds (from 45s) using Qwen3-4B-2507 for routine polling, reserving Qwen3-8B for event-triggered complex decisions
 - **FR-014**: The system MUST provide a guided setup process for installing all components on a Windows PC
 - **FR-015**: The system MUST handle game state transitions gracefully (player defeat/victory, game pause, save/load) with full state persistence — on save, the bot preserves its current strategy, conversation history, and tactical context; on load, it resumes exactly where it left off
 - **FR-016**: The system MUST log all LLM strategic decisions and key tactical events to a file for post-game analysis and debugging

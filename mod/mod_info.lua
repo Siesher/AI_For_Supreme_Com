@@ -1,0 +1,17 @@
+name = "LLM AI Bot (UEF)"
+uid = "supcom-llm-ai-bot-001-uef"
+version = 1
+copyright = ""
+description = "Local LLM-driven AI opponent and ally for Supreme Commander: FA."
+author = "SupCom LLM AI Bot Project"
+url = ""
+icon = ""
+selectable = true
+enabled = true
+exclusive = false
+ui_only = false
+requires = {}
+requiresNames = {}
+conflicts = {}
+before = {}
+after = {}

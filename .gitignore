@@ -1,0 +1,51 @@
+# SupCom:FA LLM AI Bot — .gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+.pytest_cache/
+
+# C++ / CMake build artifacts
+build/
+bridge/build/
+bridge/build_cmake/
+*.o
+*.obj
+*.dll
+*.lib
+*.exp
+*.pdb
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# IDE
+.vscode/
+.idea/
+*.user
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+
+# Logs and runtime
+*.log
+*.jsonl
+
+# Secrets / local config overrides
+config.local.json
+.env
+.env.*
+
+# FAF mod install artifacts (installed, not source)
+mod_installed/
