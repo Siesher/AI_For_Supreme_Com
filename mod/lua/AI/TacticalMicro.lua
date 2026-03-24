@@ -42,7 +42,7 @@ local function GetBestTarget(unit, enemy_units)
             local closest  = nil
             local min_dist = 9999
             for _, t in ipairs(candidates) do
-                if t and not t:IsDead() then
+                if t and not t.Dead then
                     local d = VDist3(pos, t:GetPosition())
                     if d < min_dist then
                         min_dist = d
@@ -103,7 +103,7 @@ function TacticalMicroThread(brain)
             local retreat_group = {}
 
             for _, unit in ipairs(land_units) do
-                if unit and not unit:IsDead() then
+                if unit and not unit.Dead then
                     local hp_frac = GetUnitHPFraction(unit)
                     if hp_frac < retreat_thr then
                         table.insert(retreat_group, unit)
@@ -126,7 +126,7 @@ function TacticalMicroThread(brain)
                 if nearby_enemies and table.getn(nearby_enemies) > 0 then
                     local enemy_units = {}
                     for _, u in ipairs(nearby_enemies) do
-                        if u and not u:IsDead()
+                        if u and not u.Dead
                             and IsEnemy(brain:GetArmyIndex(), u:GetArmyIndex())
                         then
                             table.insert(enemy_units, u)
@@ -169,7 +169,7 @@ function AirMicroThread(brain)
             local base_pos = (acu_list and table.getn(acu_list) > 0) and acu_list[1]:GetPosition() or {0, 0, 0}
 
             for _, unit in ipairs(interceptors) do
-                if unit and not unit:IsDead() then
+                if unit and not unit.Dead then
                     local queue = unit:GetCommandQueue()
                     if not queue or table.getn(queue) == 0 then
                         local patrol_pos = {

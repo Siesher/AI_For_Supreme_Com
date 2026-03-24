@@ -295,7 +295,13 @@ LLMAIBrain = Class(AIBrain) {
         local ChatHandler = import("/mods/supcom-llm-ai-bot/lua/AI/ChatHandler.lua")
         WaitSeconds(3)
 
+        -- Install the SimCallbacks hook now that sim layer is initialised
+        ChatHandler.EnsureHooked()
+
         while not self.Dead do
+            -- Retry hook if it failed on first attempt (SimCallbacks may appear later)
+            ChatHandler.EnsureHooked()
+
             -- Drain player messages captured by the SimCallbacks hook
             local msgs = ChatHandler.GetPendingMessages()
             if msgs and table.getn(msgs) > 0 then

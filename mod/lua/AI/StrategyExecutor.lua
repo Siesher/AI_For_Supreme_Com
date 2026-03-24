@@ -71,7 +71,7 @@ local function SetFactoryQueues(brain, strategy_name)
     if not factories then return end
 
     for _, factory in ipairs(factories) do
-        if factory and not factory:IsDead() then
+        if factory and not factory.Dead then
             factory:SetHoldBuild(false)
             for _, bp_id in ipairs(queue_units) do
                 IssueBuildFactory({factory}, bp_id, 1)
@@ -94,28 +94,68 @@ local function AdvanceACUBuild(brain, strategy_name)
 
     -- Initialise index on first call or after strategy change
     if not brain._build_index then brain._build_index = 1 end
-    if brain._build_index > t_len then return end  -- template exhausted
+
+    -- After primary template is done, switch to expansion loop
+    local using_expansion = false
+    local bp_id
+    if brain._build_index > t_len then
+        local expansion = BuildOrderUEF.GetExpansionLoop()
+        if not expansion or table.getn(expansion) == 0 then return end
+        -- Loop within expansion template
+        if not brain._expansion_index then brain._expansion_index = 1 end
+        local exp_len = table.getn(expansion)
+        bp_id = expansion[brain._expansion_index]
+        using_expansion = true
+    else
+        bp_id = template[brain._build_index]
+    end
+
+    if not bp_id then return end
 
     -- Find ACU
     local acu_list = brain:GetListOfUnits(categories.COMMAND, false, false)
     if not acu_list or table.getn(acu_list) == 0 then return end
     local acu = acu_list[1]
-    if not acu or acu:IsDead() then return end
+    if not acu or acu.Dead then return end
 
     -- Only act when ACU is idle
     local queue = acu:GetCommandQueue()
     if queue and table.getn(queue) > 0 then return end
 
-    local bp_id   = template[brain._build_index]
     local acu_pos = acu:GetPosition()
 
-    LOG(string.format("[StrategyExecutor] Build %d/%d: %s", brain._build_index, t_len, tostring(bp_id)))
+    if using_expansion then
+        local exp_len = table.getn(BuildOrderUEF.GetExpansionLoop())
+        LOG(string.format("[StrategyExecutor] Expansion %d/%d: %s",
+            brain._expansion_index, exp_len, tostring(bp_id)))
+    else
+        LOG(string.format("[StrategyExecutor] Build %d/%d: %s",
+            brain._build_index, t_len, tostring(bp_id)))
+    end
 
     local ok, err = pcall(IssueBuildMobile, {acu}, acu_pos, bp_id, {})
     if ok then
-        brain._build_index = brain._build_index + 1
+        if using_expansion then
+            brain._expansion_index = brain._expansion_index + 1
+            local exp_len = table.getn(BuildOrderUEF.GetExpansionLoop())
+            if brain._expansion_index > exp_len then
+                brain._expansion_index = 1  -- loop
+            end
+        else
+            brain._build_index = brain._build_index + 1
+        end
     else
-        LOG("[StrategyExecutor] IssueBuildMobile FAILED: " .. tostring(err))
+        -- Skip this blueprint if it fails (e.g. no valid placement)
+        LOG("[StrategyExecutor] IssueBuildMobile FAILED: " .. tostring(err) .. " — skipping")
+        if using_expansion then
+            brain._expansion_index = (brain._expansion_index or 1) + 1
+            local exp_len = table.getn(BuildOrderUEF.GetExpansionLoop())
+            if brain._expansion_index > exp_len then
+                brain._expansion_index = 1
+            end
+        else
+            brain._build_index = brain._build_index + 1
+        end
     end
 end
 

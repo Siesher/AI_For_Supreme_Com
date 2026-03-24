@@ -47,7 +47,7 @@ local function AssignIdleEngineers(brain)
 
     local assigned = 0
     for _, eng in ipairs(engineers) do
-        if eng and not eng:IsDead() and IsEngineerIdle(eng) then
+        if eng and not eng.Dead and IsEngineerIdle(eng) then
             local pos = eng:GetPosition()
 
             -- 1. Try to reclaim nearby wreckage
@@ -64,7 +64,7 @@ local function AssignIdleEngineers(brain)
                     local closest_factory = nil
                     local closest_dist    = 9999
                     for _, fac in ipairs(factories) do
-                        if fac and not fac:IsDead() then
+                        if fac and not fac.Dead then
                             local d = VDist3(pos, fac:GetPosition())
                             if d < closest_dist then
                                 closest_dist    = d

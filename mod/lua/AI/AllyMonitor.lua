@@ -71,7 +71,7 @@ local function GetAirThreatNearAllyBase(ally_base_pos)
     local threat = 0
     local bot_army = -1  -- will be set when available
     for _, u in ipairs(all_units) do
-        if u and not u:IsDead()
+        if u and not u.Dead
             and EntityCategoryContains(categories.AIR * categories.MOBILE * categories.MILITARY, u)
         then
             -- Count enemy air units (not allied)

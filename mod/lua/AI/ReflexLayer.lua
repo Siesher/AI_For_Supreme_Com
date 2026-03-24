@@ -59,7 +59,7 @@ local function ScrambleInterceptors(brain, ally_base_pos)
     local target_pos = {ally_base_pos[1], 0, ally_base_pos[2]}
     local deployed = 0
     for _, unit in ipairs(interceptors) do
-        if not unit:IsDead() then
+        if not unit.Dead then
             IssuePatrol({unit}, target_pos)
             deployed = deployed + 1
         end
@@ -81,7 +81,7 @@ local function SendGroundSupport(brain, ally_base_pos)
     local target_pos = {ally_base_pos[1], 0, ally_base_pos[2]}
     local nearby = {}
     for _, unit in ipairs(land_units) do
-        if not unit:IsDead() then
+        if not unit.Dead then
             local d = VDist3(unit:GetPosition(), target_pos)
             table.insert(nearby, {unit = unit, dist = d})
         end
@@ -109,7 +109,7 @@ local function SendArmySupport(brain, ally_base_pos)
     local send_count = math.max(1, math.floor(table.getn(land_units) * 0.4))
     local to_send    = {}
     for i = 1, send_count do
-        if not land_units[i]:IsDead() then
+        if not land_units[i].Dead then
             table.insert(to_send, land_units[i])
         end
     end

@@ -21,34 +21,39 @@ local _pending_player_messages = {}
 local _pending_bot_messages = {}
 
 -- ---------------------------------------------------------------------------
--- Chat receive callback
+-- Chat receive callback (deferred — SimCallbacks may not exist at import time)
 -- ---------------------------------------------------------------------------
 
--- Hook FAF's SimCallbacks.ChatMessage to capture player messages.
--- FAF calls SimCallbacks.ChatMessage(data) where data = {Msg={...}, From="PlayerName"}
-local original_chat_callback = SimCallbacks.ChatMessage
+local _hooked = false
 
-SimCallbacks.ChatMessage = function(data)
-    -- Call original handler first
-    if original_chat_callback then
-        original_chat_callback(data)
-    end
-
-    if not data or not data.Msg then return end
-
-    local msg    = data.Msg
-    local sender = msg.sender or ""
-    local text   = msg.text   or ""
-
-    -- Only capture messages from human players (not bots or system)
-    -- FAF army index 1 is usually the host player, but we check by sender name
-    if sender ~= "" and text ~= "" then
-        -- Add to rolling buffer
-        table.insert(_pending_player_messages, text)
-        -- Trim to max 10
-        while table.getn(_pending_player_messages) > MAX_BUFFER do
-            table.remove(_pending_player_messages, 1)
+--- Install the SimCallbacks.ChatMessage hook.  Must be called from a thread
+--- (not at module scope) because SimCallbacks is only available after the sim
+--- layer finishes initialisation.
+function EnsureHooked()
+    if _hooked then return end
+    local ok = pcall(function()
+        local sc = rawget(_G, "SimCallbacks")
+        if sc then
+            local original = sc.ChatMessage
+            sc.ChatMessage = function(data)
+                if original then original(data) end
+                if not data or not data.Msg then return end
+                local msg    = data.Msg
+                local sender = msg.sender or ""
+                local text   = msg.text   or ""
+                if sender ~= "" and text ~= "" then
+                    table.insert(_pending_player_messages, text)
+                    while table.getn(_pending_player_messages) > MAX_BUFFER do
+                        table.remove(_pending_player_messages, 1)
+                    end
+                end
+            end
+            _hooked = true
+            LOG("[ChatHandler] SimCallbacks.ChatMessage hooked successfully")
         end
+    end)
+    if not ok then
+        LOG("[ChatHandler] SimCallbacks hook failed (will retry)")
     end
 end
 
