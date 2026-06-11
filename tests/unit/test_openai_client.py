@@ -185,3 +185,55 @@ def test_query_timeout_returns_none(monkeypatch):
     result = _run(client.query([{"role": "user", "content": "go"}]))
     _run(client.close())
     assert result is None
+
+
+def test_to_openai_messages_multi_round_id_linkage():
+    # Two assistant+tool rounds: each tool message must link to ITS round's
+    # tool_call id, not a stale id from the previous round.
+    msgs = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"function": {"name": "get_enemy_army", "arguments": {}}}],
+        },
+        {"role": "tool", "content": '{"land": 5}'},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"function": {"name": "get_map_control", "arguments": {}}}],
+        },
+        {"role": "tool", "content": '{"pct": 40}'},
+    ]
+    out = _to_openai_messages(msgs)
+    r1_id = out[1]["tool_calls"][0]["id"]
+    assert out[2]["tool_call_id"] == r1_id
+    r2_id = out[3]["tool_calls"][0]["id"]
+    assert out[4]["tool_call_id"] == r2_id
+    assert r1_id != r2_id
+
+
+def test_query_empty_choices_returns_empty_tool_calls(monkeypatch):
+    client = _client()
+
+    async def fake_post(url, json=None):
+        return _FakeResp({"choices": []})
+
+    monkeypatch.setattr(client._http_client, "post", fake_post)
+    result = _run(client.query([{"role": "user", "content": "go"}]))
+    _run(client.close())
+    assert result["tool_calls"] == []
+
+
+def test_query_http_error_returns_none(monkeypatch):
+    client = _client()
+
+    async def fake_post(url, json=None):
+        request = httpx.Request("POST", url)
+        response = httpx.Response(500, request=request)
+        raise httpx.HTTPStatusError("server error", request=request, response=response)
+
+    monkeypatch.setattr(client._http_client, "post", fake_post)
+    result = _run(client.query([{"role": "user", "content": "go"}]))
+    _run(client.close())
+    assert result is None
