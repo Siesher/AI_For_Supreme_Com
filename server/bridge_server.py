@@ -262,16 +262,19 @@ async def main(config_path: str) -> None:
 
     log.info("SupCom LLM AI Bot bridge starting…")
     log.info("  Config  : %s", config_path)
+    log.info("  Pipe    : %s", config["bridge"]["pipe_name"])
+
+    # Resolve which inference engine to use (KoboldCpp/Ollama/LM Studio/vLLM/…).
+    # This normalizes config["llm"] (model_deep/model_fast/base_url/api_style),
+    # so the model log below must run AFTER it — the default koboldcpp config
+    # carries those values under llm.engines, not at the llm top level.
+    resolved = resolve_engine(config)
+    api_style = resolved["api_style"]
     log.info(
         "  Model   : %s (deep) / %s (fast)",
         config["llm"]["model_deep"],
         config["llm"]["model_fast"],
     )
-    log.info("  Pipe    : %s", config["bridge"]["pipe_name"])
-
-    # Resolve which inference engine to use (KoboldCpp/Ollama/LM Studio/vLLM/…)
-    resolved = resolve_engine(config)
-    api_style = resolved["api_style"]
     log.info(
         "  Engine  : %s (api_style=%s, %s)",
         resolved["engine_name"],
