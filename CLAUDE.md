@@ -1,7 +1,7 @@
-# SupCom LLM AI Bot — Development Guide
+﻿# SupCom LLM AI Bot — Development Guide
 
 **Branch**: `001-supcom-llm-ai-bot`
-**Last updated**: 2026-02-18
+**Last updated**: 2026-03-29
 
 ---
 
@@ -19,6 +19,31 @@ Three-layer response system for the ally-mode bot:
 
 ---
 
+## ReAct Agent Loop (002-agent-react-loop)
+
+The LLM agent uses a multi-step ReAct (Reason + Act) loop per decision cycle:
+
+1. **Observe** — LLM calls observation tools (get_enemy_army, get_threat_at, etc.)
+2. **Decide** — LLM analyzes results, calls action tools (attack, defend, etc.)
+3. **Feedback** — Action results returned to LLM for follow-up decisions
+4. **Memory** — Completed cycles stored in rolling buffer, included in future prompts
+
+**Key files**: `server/react_loop.py` (orchestrator), `server/decision_memory.py` (session memory), `mod/lua/AI/ObservationHandlers.lua` (Lua-side queries)
+
+**Config** (`installer/config.json` → `bot`):
+- `react_max_iterations`: 3 (max LLM queries per cycle)
+- `react_cycle_timeout_s`: 30 (total cycle budget)
+- `decision_memory_size`: 10 (rolling buffer entries)
+
+**Pipe message types**:
+- `observation_request` / `observation_result` — read-only game queries
+- `action_execute` / `action_result` — action execution with feedback
+- `command` — legacy batch command (still sent for backward compat)
+
+**Observation tools**: `get_enemy_army`, `get_threat_at`, `get_mass_points`, `get_my_factories`, `get_map_control`
+
+---
+
 ## LLM Models
 
 | Tag | Size | VRAM | Use |
@@ -27,6 +52,33 @@ Three-layer response system for the ally-mode bot:
 | `qwen3.5:4b` | Q4_K_M | ~2.5 GB | Fast/routine/ally |
 
 **Critical**: Every system prompt MUST begin with `/no_think` to disable Qwen3.5 chain-of-thought tokens.
+
+### Inference Engine Selection (`llm.engine` in config.json)
+
+Switch engines by changing **one key** — `llm.engine` — to a preset in `llm.engines`:
+
+| `engine` | api_style | base_url | Quant | When to use |
+|----------|-----------|----------|-------|-------------|
+| `koboldcpp` (default) | openai | `:5001/v1` | GGUF Q4 | Native Windows, single .exe, best VRAM control + GBNF tool-grammar |
+| `ollama` | openai | `:11434/v1` | GGUF Q4 | Incumbent, zero-install; Ollama's OpenAI endpoint |
+| `ollama_native` | ollama | `:11434` | GGUF Q4 | Ollama via `/api/chat` (keeps tuned options + `keep_alive`, `kv_cache_type`) |
+| `lmstudio` | openai | `:1234/v1` | GGUF Q4 | GUI one-click; `lms server start` |
+| `vllm` | openai | `:8000/v1` | NVFP4/FP8 | Max throughput (WSL2 on Blackwell); experimental |
+| `tabbyapi` | openai | `:5000/v1` | exl3 | ExLlamaV3; fast single-stream |
+
+All `openai` engines go through `server/openai_client.py` (`/v1/chat/completions` with `tools`).
+`ollama_native` uses `server/llm_client.py`. `hf_turbo` (set legacy `llm.backend`) uses `server/hf_llm_client.py`.
+Engine speed is NOT the bottleneck for this bot (even 31 tok/s on 14B Q4 meets the 3-4 s/decision budget),
+so the default favors native-Windows reliability + game co-residency over raw FP4 throughput.
+
+**KoboldCpp quick start:** `koboldcpp.exe --model qwen3.5-14b-q4_k_m.gguf --usecuda --contextsize 8192 --port 5001`
+
+**TurboQuant** (arXiv:2504.19874): online vector quantization for KV cache.
+Keys use Q_prod (MSE + QJL residual), values use Q_mse (rotation + Lloyd-Max codebook).
+Config: `turbo_quant.key_bits`, `turbo_quant.value_bits` in config.json.
+
+**HF backend requires**: `torch`, `transformers`, `bitsandbytes`, `scipy`, `accelerate`.
+Install: `pip install torch transformers bitsandbytes scipy accelerate`
 
 ---
 
@@ -93,7 +145,10 @@ AI_For_Supreme_Com/
 │   ├── llm_router.py           Model selection (T035/T036)
 │   ├── config.py               Config loader/validator (T041)
 │   ├── decision_logger.py      JSONL decision log (T048)
-│   └── save_state.py           Save/load bot state (T049)
+│   ├── save_state.py           Save/load bot state (T049)
+│   ├── hf_llm_client.py        HF Transformers + TurboQuant backend
+│   ├── turbo_quant.py          TurboQuant engine (arXiv:2504.19874)
+│   └── turbo_quant_cache.py    TurboQuantCache (HF Cache API)
 ├── installer/
 │   ├── config.json             Default configuration
 │   ├── install.ps1             Guided installer (T042/T043)
