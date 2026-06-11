@@ -78,11 +78,17 @@ def resolve_engine(config: dict) -> dict:
     if engine_name and engine_name in presets:
         preset = presets[engine_name]
         api_style = preset.get("api_style", "openai")
-        base_url = preset.get(
-            "base_url", llm.get("base_url", "http://localhost:5001/v1")
-        )
-        model_deep = preset.get("model_deep", llm.get("model_deep"))
-        model_fast = preset.get("model_fast", model_deep)
+        base_url = preset.get("base_url") or llm.get("base_url")
+        if not base_url:
+            raise ValueError(
+                f"Engine '{engine_name}' preset has no base_url (and llm.base_url is unset)"
+            )
+        model_deep = preset.get("model_deep") or llm.get("model_deep")
+        if not model_deep:
+            raise ValueError(
+                f"Engine '{engine_name}' preset has no model_deep (and llm.model_deep is unset)"
+            )
+        model_fast = preset.get("model_fast") or model_deep
     else:
         if engine_name:
             log.warning(

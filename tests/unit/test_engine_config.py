@@ -3,6 +3,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "server"))
 
 from engine_config import resolve_engine, DEFAULT_ENGINES
@@ -24,7 +26,7 @@ def test_explicit_engine_vllm():
     r = resolve_engine(cfg)
     assert r["api_style"] == "openai"
     assert r["base_url"] == "http://localhost:8000/v1"
-    assert r["model_deep"].startswith("Qwen")
+    assert r["model_deep"] == "Qwen/Qwen3.5-14B-Instruct"
 
 
 def test_custom_engines_override_defaults():
@@ -90,3 +92,53 @@ def test_lmstudio_and_tabbyapi_presets_exist():
     assert "lmstudio" in DEFAULT_ENGINES
     assert "tabbyapi" in DEFAULT_ENGINES
     assert DEFAULT_ENGINES["lmstudio"]["base_url"].endswith("/v1")
+
+
+def test_partial_preset_missing_model_deep_raises():
+    cfg = {
+        "llm": {
+            "engine": "custom",
+            "engines": {
+                "custom": {
+                    "api_style": "openai",
+                    "base_url": "http://localhost:7000/v1",
+                }
+            },
+        }
+    }
+    with pytest.raises(ValueError):
+        resolve_engine(cfg)
+
+
+def test_partial_preset_missing_base_url_raises():
+    cfg = {
+        "llm": {
+            "engine": "custom",
+            "engines": {"custom": {"api_style": "openai", "model_deep": "m"}},
+        }
+    }
+    with pytest.raises(ValueError):
+        resolve_engine(cfg)
+
+
+def test_model_fast_falls_back_to_model_deep():
+    cfg = {
+        "llm": {
+            "engine": "custom",
+            "engines": {
+                "custom": {
+                    "api_style": "openai",
+                    "base_url": "http://localhost:7000/v1",
+                    "model_deep": "m",
+                }
+            },
+        }
+    }
+    r = resolve_engine(cfg)
+    assert r["model_fast"] == "m"
+
+
+def test_engines_null_does_not_crash():
+    cfg = {"llm": {"engine": "koboldcpp", "engines": None}}
+    r = resolve_engine(cfg)
+    assert r["api_style"] == "openai"
