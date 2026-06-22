@@ -13,7 +13,8 @@ from typing import Any, Optional
 import httpx
 
 from tools import GAME_TOOLS
-from xml_tool_parser import _parse_xml_tool_calls  # re-exported for callers/tests
+from xml_tool_parser import _parse_xml_tool_calls as _parse_xml_tool_calls  # noqa: F401 re-export for tests
+from xml_tool_parser import parse_fallback_tool_calls
 
 log = logging.getLogger(__name__)
 
@@ -149,16 +150,17 @@ class LLMClient:
                 if name:
                     tool_calls.append({"name": name, "args": args})
 
-            # If model responded with text instead of tool_calls JSON,
-            # try to parse Qwen3.5 XML format: <function=name><parameter=k>v</parameter></function>
+            # If model responded with text instead of tool_calls JSON, recover the
+            # call from free text (name(...), name\n{json}, bare/flat JSON, fences,
+            # <tool_call>/<function=...> leaks) before falling back to noop.
             if not tool_calls and content:
-                xml_parsed = _parse_xml_tool_calls(content)
-                if xml_parsed:
-                    tool_calls = xml_parsed
+                recovered = parse_fallback_tool_calls(content)
+                if recovered:
+                    tool_calls = recovered
                     log.warning(
-                        "LLM returned XML tool calls (Qwen3.5 format), parsed %d call(s): %s",
-                        len(xml_parsed),
-                        [tc["name"] for tc in xml_parsed],
+                        "Recovered %d tool call(s) from free text: %s",
+                        len(recovered),
+                        [tc["name"] for tc in recovered],
                     )
                 else:
                     log.info("LLM returned plain text (no tools): %s", content[:200])

@@ -15,7 +15,7 @@ from typing import Any, Optional
 import httpx
 
 from tools import GAME_TOOLS
-from xml_tool_parser import _parse_xml_tool_calls
+from xml_tool_parser import parse_fallback_tool_calls
 
 log = logging.getLogger(__name__)
 
@@ -191,13 +191,13 @@ class OpenAIClient:
             content = msg.get("content") or ""
 
             if not tool_calls and content:
-                xml_parsed = _parse_xml_tool_calls(content)
-                if xml_parsed:
-                    tool_calls = xml_parsed
+                recovered = parse_fallback_tool_calls(content)
+                if recovered:
+                    tool_calls = recovered
                     log.warning(
-                        "LLM returned XML tool calls, parsed %d call(s): %s",
-                        len(xml_parsed),
-                        [tc["name"] for tc in xml_parsed],
+                        "Recovered %d tool call(s) from free text: %s",
+                        len(recovered),
+                        [tc["name"] for tc in recovered],
                     )
                 else:
                     log.info("LLM returned plain text (no tools): %s", content[:200])

@@ -1,0 +1,766 @@
+[
+  {
+    "id": "name_nl_json_attack_basic",
+    "shape": "name_newline_json",
+    "raw_text": "attack\n{\"unit_type\": \"land\", \"force_size\": \"full\"}",
+    "expected": [
+      {
+        "name": "attack",
+        "args": {
+          "unit_type": "land",
+          "force_size": "full"
+        }
+      }
+    ],
+    "why": "Canonical lens: bare tool name alone on first line, JSON args object on the next line. Both required (unit_type) and optional (force_size) present with valid enums."
+  },
+  {
+    "id": "name_nl_json_nothink_echo_setstrategy",
+    "shape": "name_newline_json",
+    "raw_text": "/no_think\nset_strategy\n{\"strategy\": \"turtle\", \"reasoning\": \"enemy air heavy, need static AA and shields\"}",
+    "expected": [
+      {
+        "name": "set_strategy",
+        "args": {
+          "strategy": "turtle",
+          "reasoning": "enemy air heavy, need static AA and shields"
+        }
+      }
+    ],
+    "why": "The mandatory /no_think directive leaks into the assistant content as its own line before the name. Parser must skip the /no_think echo line, then recognize set_strategy on the next line followed by JSON."
+  },
+  {
+    "id": "name_nl_json_leading_blanks_scout",
+    "shape": "name_newline_json",
+    "raw_text": "\n\n\nscout\n{\"direction\": \"enemy_base\"}",
+    "expected": [
+      {
+        "name": "scout",
+        "args": {
+          "direction": "enemy_base"
+        }
+      }
+    ],
+    "why": "Several leading blank lines before the tool name (common Q4 whitespace artifact). Parser must strip empty lines, find scout as the name line, then parse the required direction arg."
+  },
+  {
+    "id": "name_nl_json_trailing_prose_builds",
+    "shape": "name_newline_json",
+    "raw_text": "build_units\n{\"priority\": \"anti_air\", \"urgency\": \"high\"}\nThis will counter the gunship wave I expect in the next 90 seconds and protect our mexes.",
+    "expected": [
+      {
+        "name": "build_units",
+        "args": {
+          "priority": "anti_air",
+          "urgency": "high"
+        }
+      }
+    ],
+    "why": "Valid name+JSON, then the model keeps talking with a strategy justification AFTER the JSON. Parser must extract only the leading tool call and ignore trailing prose (must not turn the prose into a second call)."
+  },
+  {
+    "id": "name_nl_json_fenced_defend_int",
+    "shape": "fenced_json",
+    "raw_text": "defend\n```json\n{\"radius\": 80}\n```",
+    "expected": [
+      {
+        "name": "defend",
+        "args": {
+          "radius": 80
+        }
+      }
+    ],
+    "why": "Name on its own line, then the JSON args wrapped in a ```json fenced block. radius is an integer param (not enum), must be parsed/cast as int 80 not the string '80' to match the schema's integer type."
+  },
+  {
+    "id": "name_nl_json_truncated_chat",
+    "shape": "name_newline_json",
+    "raw_text": "chat\n{\"message\": \"Союзник, держи оборону на севере, я веду танки на их базу с восто",
+    "expected": [
+      {
+        "name": "chat",
+        "args": {
+          "message": "Союзник, держи оборону на севере, я веду танки на их базу с восто"
+        }
+      }
+    ],
+    "why": "TRUNCATED mid-string: JSON cut off by max_tokens before the closing quote/brace. Best-effort recovery should still yield a chat call with the partial Russian message as the message arg (Cyrillic content, required param present)."
+  },
+  {
+    "id": "name_nl_json_truncated_attack_missing_brace",
+    "shape": "name_newline_json",
+    "raw_text": "attack\n{\n  \"unit_type\": \"air\",\n  \"force_size\": \"medium\"",
+    "expected": [
+      {
+        "name": "attack",
+        "args": {
+          "unit_type": "air",
+          "force_size": "medium"
+        }
+      }
+    ],
+    "why": "Pretty-printed multi-line JSON truncated before the closing brace (both key-value pairs complete, only } missing). Best-effort parse should close the object and recover both valid enum args."
+  },
+  {
+    "id": "name_nl_json_noop_thinkleak",
+    "shape": "name_newline_json",
+    "raw_text": "Situation looks stable, mass income positive, no incoming threats. I'll hold.\nnoop\n{\"reasoning\": \"economy healthy, no enemy movement detected, base AI handling production\"}",
+    "expected": [
+      {
+        "name": "noop",
+        "args": {
+          "reasoning": "economy healthy, no enemy movement detected, base AI handling production"
+        }
+      }
+    ],
+    "why": "A reasoning sentence leaks BEFORE the name line (think leak), then the noop name on its own line followed by JSON. Parser must skip the prose preamble and lock onto the name+JSON pair, not mistake the prose for a no-tool negative."
+  },
+  {
+    "id": "name_nl_json_negative_prose_only",
+    "shape": "negative",
+    "raw_text": "I could attack now with a medium land force, or I could set_strategy to turtle and build_units for anti_air instead. The defend option with radius 80 is also tempting. Let me think about which gives the best tempo.",
+    "expected": [],
+    "why": "True negative: prose that NAMES several tools (attack, set_strategy, build_units, defend) and even mentions arg-like values inline, but never emits a name-alone-on-a-line followed by a JSON object. Parser must NOT hallucinate a call from strategy discussion; must fall back to noop downstream."
+  },
+  {
+    "id": "py_call_double_quoted_args",
+    "shape": "python_call",
+    "raw_text": "Enemy has a big air force massing near our base. I should commit everything.\n\nattack(unit_type=\"air\", force_size=\"full\")",
+    "expected": [
+      {
+        "name": "attack",
+        "args": {
+          "unit_type": "air",
+          "force_size": "full"
+        }
+      }
+    ],
+    "why": "Canonical Python function call with double-quoted enum string values and trailing-after prose; parser must pull the kwargs into args dict."
+  },
+  {
+    "id": "py_call_int_kwarg_defend",
+    "shape": "python_call",
+    "raw_text": "defend(radius=80)",
+    "expected": [
+      {
+        "name": "defend",
+        "args": {
+          "radius": 80
+        }
+      }
+    ],
+    "why": "Bare single-line Python call with an unquoted integer kwarg; radius must be parsed as int 80, not the string \"80\"."
+  },
+  {
+    "id": "py_call_noarg_observation",
+    "shape": "python_call",
+    "raw_text": "/no_think\nLet me check what the enemy is fielding first.\nget_enemy_army()",
+    "expected": [
+      {
+        "name": "get_enemy_army",
+        "args": {}
+      }
+    ],
+    "why": "No-arg observation tool in Python paren style with a /no_think echo and reasoning leak; empty parens must yield args={}."
+  },
+  {
+    "id": "py_call_json_object_in_parens",
+    "shape": "python_call_json_arg",
+    "raw_text": "Okay here's my move:\n\nset_strategy({\"strategy\": \"turtle\", \"reasoning\": \"We're behind on army, need to wall up and tech.\"})",
+    "expected": [
+      {
+        "name": "set_strategy",
+        "args": {
+          "strategy": "turtle",
+          "reasoning": "We're behind on army, need to wall up and tech."
+        }
+      }
+    ],
+    "why": "Function name with a single JSON object inside the parens (not kwargs); parser must decode the JSON dict as the args."
+  },
+  {
+    "id": "py_call_two_calls_sequence",
+    "shape": "python_call_fenced_multi",
+    "raw_text": "First gather intel, then react.\n```python\nget_threat_at(position=\"own_base\")\nscout(direction=\"enemy_base\")\n```",
+    "expected": [
+      {
+        "name": "get_threat_at",
+        "args": {
+          "position": "own_base"
+        }
+      },
+      {
+        "name": "scout",
+        "args": {
+          "direction": "enemy_base"
+        }
+      }
+    ],
+    "why": "Two sequential Python calls inside a ```python fence; parser must extract both in order with their respective enum args."
+  },
+  {
+    "id": "py_call_single_quotes_truncated",
+    "shape": "python_call_truncated",
+    "raw_text": "We have surplus mass lying around the battlefield, reclaim it before the enemy does.\n\nreclaim(area='battlefield'",
+    "expected": [
+      {
+        "name": "reclaim",
+        "args": {
+          "area": "battlefield"
+        }
+      }
+    ],
+    "why": "Single-quoted value and a truncated/missing closing paren (Q4 truncation); robust parser should still recover name + area."
+  },
+  {
+    "id": "py_call_self_dot_prefix",
+    "shape": "python_call_method_style",
+    "raw_text": "<think>I'll taunt them and tell my ally the plan.</think>\nself.chat(message=\"Hold the line, I'm sending air support to your base!\")",
+    "expected": [
+      {
+        "name": "chat",
+        "args": {
+          "message": "Hold the line, I'm sending air support to your base!"
+        }
+      }
+    ],
+    "why": "Leaked <think> block plus a method-style self. prefix on the call; parser must strip the prefix and keep the quoted message verbatim (incl. apostrophe and comma)."
+  },
+  {
+    "id": "py_call_positional_then_kwarg",
+    "shape": "python_call_trailing_comment",
+    "raw_text": "Shift production hard toward interceptors, their gunships are incoming.\nbuild_units(priority=\"anti_air\", urgency=\"high\")  # scramble AA now",
+    "expected": [
+      {
+        "name": "build_units",
+        "args": {
+          "priority": "anti_air",
+          "urgency": "high"
+        }
+      }
+    ],
+    "why": "Python call with a trailing # inline comment; parser must ignore the comment and not fold it into urgency."
+  },
+  {
+    "id": "py_call_pure_prose_negative",
+    "shape": "negative",
+    "raw_text": "I think the smart play here is to turtle up and tech to T3 before committing. We could attack(), but honestly defending() our mass extractors matters more right now. No function calls until I see their army.",
+    "expected": [],
+    "why": "Prose merely discusses strategy and mentions attack()/defending() rhetorically with no real args or commitment; must NOT hallucinate a tool call and fall back to noop."
+  },
+  {
+    "id": "bare_name_arguments_scout",
+    "shape": "bare_json",
+    "raw_text": "{\"name\": \"scout\", \"arguments\": {\"direction\": \"enemy_base\"}}",
+    "expected": [
+      {
+        "name": "scout",
+        "args": {
+          "direction": "enemy_base"
+        }
+      }
+    ],
+    "why": "Canonical bare JSON object with name + arguments keys, no tool tags. The most direct form of this lens; parser should map name->tool and arguments->args."
+  },
+  {
+    "id": "bare_name_args_alias_fenced",
+    "shape": "bare_json",
+    "raw_text": "/no_think\n```json\n{\"name\": \"build_units\", \"args\": {\"priority\": \"air\", \"urgency\": \"high\"}}\n```",
+    "expected": [
+      {
+        "name": "build_units",
+        "args": {
+          "priority": "air",
+          "urgency": "high"
+        }
+      }
+    ],
+    "why": "Model uses the 'args' alias instead of 'arguments' (both accepted per hf_llm_client) wrapped in a ```json fence with /no_think echo leaking on the first line. Tests fence stripping + alias handling."
+  },
+  {
+    "id": "improvised_tool_plus_args",
+    "shape": "bare_json",
+    "raw_text": "{\"tool\": \"get_threat_at\", \"args\": {\"position\": \"own_base\"}}",
+    "expected": [
+      {
+        "name": "get_threat_at",
+        "args": {
+          "position": "own_base"
+        }
+      }
+    ],
+    "why": "Improvised key spelling: 'tool' instead of 'name', with nested 'args'. A Q4 model frequently invents this synonym. Parser should treat 'tool' as the tool-name key."
+  },
+  {
+    "id": "flat_action_with_radius",
+    "shape": "bare_json",
+    "raw_text": "Defending the base perimeter now.\n{\"action\": \"defend\", \"radius\": 90}",
+    "expected": [
+      {
+        "name": "defend",
+        "args": {
+          "radius": 90
+        }
+      }
+    ],
+    "why": "FLAT object: 'action' holds the tool name and the param (radius) sits alongside at the top level rather than nested. Tests recovery when there is no nested args object at all."
+  },
+  {
+    "id": "flat_function_priority_urgency",
+    "shape": "bare_json",
+    "raw_text": "{\"function\": \"build_units\", \"priority\": \"engineers\", \"urgency\": \"normal\"}",
+    "expected": [
+      {
+        "name": "build_units",
+        "args": {
+          "priority": "engineers",
+          "urgency": "normal"
+        }
+      }
+    ],
+    "why": "Improvised 'function' key naming the tool, with both params (priority, urgency) flattened to the top level. Tests the function= key alias plus flat-param hoisting."
+  },
+  {
+    "id": "bare_noargs_observation",
+    "shape": "bare_json",
+    "raw_text": "{\"name\": \"get_enemy_army\", \"arguments\": {}}\nLet me see what they have before committing forces.",
+    "expected": [
+      {
+        "name": "get_enemy_army",
+        "args": {}
+      }
+    ],
+    "why": "No-arg observation tool emitted as bare JSON with an empty arguments object, plus trailing reasoning prose. Parser should extract the tool with empty args and ignore the prose."
+  },
+  {
+    "id": "bare_json_array_two_calls",
+    "shape": "bare_json",
+    "raw_text": "[{\"name\": \"get_mass_points\", \"arguments\": {}}, {\"name\": \"set_strategy\", \"arguments\": {\"strategy\": \"tech_up\", \"reasoning\": \"safe to expand economy\"}}]",
+    "expected": [
+      {
+        "name": "get_mass_points",
+        "args": {}
+      },
+      {
+        "name": "set_strategy",
+        "args": {
+          "strategy": "tech_up",
+          "reasoning": "safe to expand economy"
+        }
+      }
+    ],
+    "why": "A JSON array of two bare objects (observe then act) using name+arguments. Tests multi-call extraction from a top-level list, matching hf_llm_client's list branch."
+  },
+  {
+    "id": "flat_action_attack_truncated",
+    "shape": "bare_json",
+    "raw_text": "{\"action\": \"attack\", \"unit_type\": \"land\", \"force_size\": \"full\"",
+    "expected": [
+      {
+        "name": "attack",
+        "args": {
+          "unit_type": "land",
+          "force_size": "full"
+        }
+      }
+    ],
+    "why": "Flat 'action' object naming attack with unit_type and force_size top-level, but truncated mid-stream (no closing brace) as a Q4 model often cuts off. Parser should still recover the intended call from a salvageable prefix."
+  },
+  {
+    "id": "negative_strategy_prose_with_jsonish_words",
+    "shape": "negative",
+    "raw_text": "/no_think\nWe could attack now, but their {air} presence worries me. I think we should hold and defend until our economy recovers. No clear action object yet, just thinking out loud about whether to build or expand.",
+    "expected": [],
+    "why": "Pure strategy prose that mentions words like 'attack', 'defend', and even a stray brace, but is NOT a tool-call object (no name/tool/action/function key naming a catalog tool). Must NOT hallucinate a call; falls back to noop."
+  },
+  {
+    "id": "mdjson_01_plain_fence_single",
+    "shape": "fenced_json",
+    "raw_text": "```json\n{\"name\": \"set_strategy\", \"arguments\": {\"strategy\": \"turtle\", \"reasoning\": \"Enemy air dominates; we need static defense before pushing.\"}}\n```",
+    "expected": [
+      {
+        "name": "set_strategy",
+        "args": {
+          "strategy": "turtle",
+          "reasoning": "Enemy air dominates; we need static defense before pushing."
+        }
+      }
+    ],
+    "why": "Canonical single tool call in a json code fence using OpenAI-style {name, arguments}. The fence wrapper is the only thing the native tool path missed."
+  },
+  {
+    "id": "mdjson_02_prose_then_fence",
+    "shape": "fenced_json",
+    "raw_text": "The enemy army is massing to the east and I have no scouting data there. I'll send a scout first.\n\n```json\n{\"name\": \"scout\", \"arguments\": {\"direction\": \"east\"}}\n```",
+    "expected": [
+      {
+        "name": "scout",
+        "args": {
+          "direction": "east"
+        }
+      }
+    ],
+    "why": "One sentence of leading prose justifying the call, then the fenced JSON. Parser must skip prose and extract only the fenced object, not noop on the prose."
+  },
+  {
+    "id": "mdjson_03_array_two_calls",
+    "shape": "fenced_json_array",
+    "raw_text": "```json\n[\n  {\"name\": \"get_enemy_army\", \"arguments\": {}},\n  {\"name\": \"get_threat_at\", \"arguments\": {\"position\": \"own_base\"}}\n]\n```",
+    "expected": [
+      {
+        "name": "get_enemy_army",
+        "args": {}
+      },
+      {
+        "name": "get_threat_at",
+        "args": {
+          "position": "own_base"
+        }
+      }
+    ],
+    "why": "Fence contains a JSON ARRAY of two observation calls; both must be recovered in order. get_enemy_army has empty args."
+  },
+  {
+    "id": "mdjson_04_think_leak_then_fence",
+    "shape": "fenced_json",
+    "raw_text": "<think>I should check mass points before committing engineers. Actually the user said /no_think but let me just decide.</think>\n```json\n{\"name\": \"build_units\", \"arguments\": {\"priority\": \"engineers\", \"urgency\": \"high\"}}\n```",
+    "expected": [
+      {
+        "name": "build_units",
+        "args": {
+          "priority": "engineers",
+          "urgency": "high"
+        }
+      }
+    ],
+    "why": "Q4 model leaks a <think> block despite /no_think, then emits the real fenced call. Parser must ignore the think text and extract the fence."
+  },
+  {
+    "id": "mdjson_05_bare_args_no_arguments_key",
+    "shape": "fenced_json",
+    "raw_text": "Decision:\n```json\n{\"tool\": \"defend\", \"radius\": 90}\n```",
+    "expected": [
+      {
+        "name": "defend",
+        "args": {
+          "radius": 90
+        }
+      }
+    ],
+    "why": "Q4 flattened the schema: uses 'tool' instead of 'name' and inlines the param 'radius' at top level instead of nesting under arguments. Parser should normalize tool->name and treat remaining keys as args; radius is an integer."
+  },
+  {
+    "id": "mdjson_06_truncated_fence",
+    "shape": "fenced_json_truncated",
+    "raw_text": "```json\n{\"name\": \"attack\", \"arguments\": {\"unit_type\": \"air\", \"force_size\": \"medium\"",
+    "expected": [
+      {
+        "name": "attack",
+        "args": {
+          "unit_type": "air",
+          "force_size": "medium"
+        }
+      }
+    ],
+    "why": "max_tokens cut off the response: no closing braces and no closing fence. A robust parser should brace-balance/repair and still recover name + both args."
+  },
+  {
+    "id": "mdjson_07_chat_unicode_trailing_prose",
+    "shape": "fenced_json",
+    "raw_text": "I'll coordinate with my ally before the timing push.\n```json\n{\"name\": \"chat\", \"arguments\": {\"message\": \"Готовь армию, атакуем через 2 минуты на востоке!\"}}\n```\nThis keeps us synchronized.",
+    "expected": [
+      {
+        "name": "chat",
+        "args": {
+          "message": "Готовь армию, атакуем через 2 минуты на востоке!"
+        }
+      }
+    ],
+    "why": "chat message contains Cyrillic and punctuation; fence is surrounded by prose on both sides. Parser must preserve the unicode string verbatim and ignore the trailing sentence."
+  },
+  {
+    "id": "mdjson_08_label_lang_python_dict_style",
+    "shape": "fenced_python_dict",
+    "raw_text": "Here is the call:\n```python\n{'name': 'reclaim', 'arguments': {'area': 'battlefield'}}\n```",
+    "expected": [
+      {
+        "name": "reclaim",
+        "args": {
+          "area": "battlefield"
+        }
+      }
+    ],
+    "why": "Q4 mislabels the fence language as python and uses single quotes (Python dict literal, not strict JSON). A lenient parser must still recover reclaim with area=battlefield."
+  },
+  {
+    "id": "mdjson_09_negative_strategy_prose_in_fence",
+    "shape": "negative",
+    "raw_text": "Let me reason about this.\n```json\n{\n  \"analysis\": \"The enemy could rush land or tech up to air. If they rush, I should defend; if they tech, I should also tech. Too uncertain to act yet, will gather more intel next cycle.\"\n}\n```",
+    "expected": [],
+    "why": "Fenced JSON but it's a free-form analysis object with no tool name/arguments and no catalog tool referenced. Must NOT hallucinate a call (e.g. set_strategy/defend); should fall back to noop."
+  },
+  {
+    "id": "mdjson_10_double_fence_extra_commentary",
+    "shape": "multi_fence",
+    "raw_text": "First gather intel:\n```json\n{\"name\": \"get_map_control\", \"arguments\": {}}\n```\nThen depending on results I may also want factory status:\n```json\n{\"name\": \"get_my_factories\", \"arguments\": {}}\n```",
+    "expected": [
+      {
+        "name": "get_map_control",
+        "args": {}
+      },
+      {
+        "name": "get_my_factories",
+        "args": {}
+      }
+    ],
+    "why": "Two separate json fences (not one array), each a no-arg observation call, separated by interleaved prose. Parser must collect calls from all fences in order, not just the first."
+  },
+  {
+    "id": "tool_call_json_defend",
+    "shape": "tool_call_tag",
+    "raw_text": "<tool_call>\n{\"name\": \"defend\", \"arguments\": {\"radius\": 80}}\n</tool_call>",
+    "expected": [
+      {
+        "name": "defend",
+        "args": {
+          "radius": 80
+        }
+      }
+    ],
+    "why": "Qwen3 native <tool_call> block with JSON body {name, arguments} leaked into content instead of native tool_calls. radius 80 cast to int per parser behavior."
+  },
+  {
+    "id": "func_param_anglebracket_setstrategy",
+    "shape": "function_parameter_xml",
+    "raw_text": "Enemy left flank is exposed and we have a strong land lead. Going aggressive.\n<function=set_strategy><parameter=strategy>rush</parameter><parameter=reasoning>enemy flank exposed, press the advantage now</parameter></function>",
+    "expected": [
+      {
+        "name": "set_strategy",
+        "args": {
+          "strategy": "rush",
+          "reasoning": "enemy flank exposed, press the advantage now"
+        }
+      }
+    ],
+    "why": "The <function=NAME><parameter=KEY>VAL</parameter></function> form the parser is built for, two params, with leading prose the model emitted."
+  },
+  {
+    "id": "multi_tool_call_json_blocks",
+    "shape": "tool_call_tag_multi",
+    "raw_text": "/no_think\n<tool_call>\n{\"name\": \"get_enemy_army\", \"arguments\": {}}\n</tool_call>\n<tool_call>\n{\"name\": \"attack\", \"arguments\": {\"unit_type\": \"land\", \"force_size\": \"full\"}}\n</tool_call>",
+    "expected": [
+      {
+        "name": "get_enemy_army",
+        "args": {}
+      },
+      {
+        "name": "attack",
+        "args": {
+          "unit_type": "land",
+          "force_size": "full"
+        }
+      }
+    ],
+    "why": "Two consecutive Qwen3 <tool_call> JSON blocks: an observation then an action. Parser should extract both in order."
+  },
+  {
+    "id": "multi_func_xml_observe_then_threat",
+    "shape": "function_parameter_xml_multi",
+    "raw_text": "Let me gather intel before committing.\n<function=get_my_factories></function>\n<function=get_threat_at><parameter=position>enemy_base</parameter></function>",
+    "expected": [
+      {
+        "name": "get_my_factories",
+        "args": {}
+      },
+      {
+        "name": "get_threat_at",
+        "args": {
+          "position": "enemy_base"
+        }
+      }
+    ],
+    "why": "Two <function=...> angle-bracket calls in one message, no-arg observation followed by get_threat_at with an enum position. Matches parser's multi-call test."
+  },
+  {
+    "id": "tool_call_json_chat_cyrillic_fenced",
+    "shape": "tool_call_tag_fenced",
+    "raw_text": "I'll coordinate the timing push with my ally.\n```\n<tool_call>\n{\"name\": \"chat\", \"arguments\": {\"message\": \"Атакуем базу врага через 30 секунд!\"}}\n</tool_call>\n```\nThat should sync our attack.",
+    "expected": [
+      {
+        "name": "chat",
+        "args": {
+          "message": "Атакуем базу врага через 30 секунд!"
+        }
+      }
+    ],
+    "why": "Qwen3 <tool_call> JSON wrapped in a markdown code fence (Q4 models often fence the leaked tag block) with a Cyrillic chat message and trailing prose."
+  },
+  {
+    "id": "func_assignment_prose_reclaim",
+    "shape": "function_parameter_xml",
+    "raw_text": "Mass income dipped and there are plenty of wrecks from the last skirmish. Send engineers out.\n<function=reclaim><parameter=area>battlefield</parameter></function>",
+    "expected": [
+      {
+        "name": "reclaim",
+        "args": {
+          "area": "battlefield"
+        }
+      }
+    ],
+    "why": "Single angle-bracket call for reclaim with enum area, preceded by a thinking-style leak. force_size analog: area=battlefield is valid enum."
+  },
+  {
+    "id": "multi_mixed_json_then_func_xml",
+    "shape": "mixed_tag_forms_multi",
+    "raw_text": "We need anti-air urgently and intel on the north.\n<tool_call>\n{\"name\": \"build_units\", \"arguments\": {\"priority\": \"anti_air\", \"urgency\": \"high\"}}\n</tool_call>\n<function=scout><parameter=direction>north</parameter></function>",
+    "expected": [
+      {
+        "name": "build_units",
+        "args": {
+          "priority": "anti_air",
+          "urgency": "high"
+        }
+      },
+      {
+        "name": "scout",
+        "args": {
+          "direction": "north"
+        }
+      }
+    ],
+    "why": "Mixed leak: first a Qwen3 <tool_call> JSON block then a <function=...> angle-bracket block in the same message. Parser should recover both build_units and scout."
+  },
+  {
+    "id": "truncated_tool_call_json",
+    "shape": "tool_call_tag_truncated",
+    "raw_text": "<tool_call>\n{\"name\": \"set_strategy\", \"arguments\": {\"strategy\": \"turtle\", \"reasoning\": \"under heavy air pressure, need to consolidate",
+    "expected": [
+      {
+        "name": "set_strategy",
+        "args": {
+          "strategy": "turtle",
+          "reasoning": "under heavy air pressure, need to consolidate"
+        }
+      }
+    ],
+    "why": "Truncated Qwen3 <tool_call> JSON (missing closing brace and </tool_call> due to token cutoff). Realistic Q4 truncation; the name and complete args are still recoverable so a lenient parser extracts set_strategy, but the missing close tag is the adversarial wrinkle."
+  },
+  {
+    "id": "negative_prose_mentions_tags",
+    "shape": "negative",
+    "raw_text": "/no_think\nI considered emitting a tool_call to defend with a parameter for radius, and maybe a function to set_strategy, but honestly the situation is stable right now. Our perimeter holds and the enemy isn't pushing. I'll hold off on any function calls this cycle and just keep observing.",
+    "expected": [],
+    "why": "True negative: prose that DISCUSSES tool calls and even mentions the words function/parameter/tool_call but contains no actual well-formed tag block or JSON object. Parser must NOT hallucinate; falls back to noop."
+  },
+  {
+    "id": "neg_prose_names_tools",
+    "shape": "negative",
+    "raw_text": "Okay, let me think about this. The enemy army is building up in the north, so attacking right now would be premature. I should probably scout first to confirm their factory count before I commit. Defending the expansion is also tempting, but I don't want to overcommit mass to static defense this early. Let me hold off and reassess next cycle once I have better intel.",
+    "expected": [],
+    "why": "Pure strategic prose that names attack, scout, and defend as concepts but issues no actual call. Must be a true negative -> empty array (parser falls back to noop)."
+  },
+  {
+    "id": "neg_no_think_musing",
+    "shape": "negative",
+    "raw_text": "/no_think\nThinking about the macro picture: with mass income stalling, switching to a turtle strategy could buy time, and ramping anti-air build might counter their gunships. But honestly neither is urgent yet. I'll keep my current posture and watch how their air count develops.",
+    "expected": [],
+    "why": "A /no_think echo plus musing that mentions set_strategy and build_units as ideas, never formats a call. True negative."
+  },
+  {
+    "id": "trick_chat_contains_attack",
+    "shape": "tool_call_tag",
+    "raw_text": "I'll rally my ally before we commit. <tool_call>\n{\"name\": \"chat\", \"arguments\": {\"message\": \"Time to attack their north base, push with me on my mark!\"}}\n</tool_call>",
+    "expected": [
+      {
+        "name": "chat",
+        "args": {
+          "message": "Time to attack their north base, push with me on my mark!"
+        }
+      }
+    ],
+    "why": "A genuine chat call whose MESSAGE text is the phrase 'time to attack'. Parser must emit exactly one chat call and must NOT also produce an attack call from the word 'attack' inside the message."
+  },
+  {
+    "id": "trick_chat_python_scout_word",
+    "shape": "python_call",
+    "raw_text": "Let me coordinate.\nchat(message=\"Going to scout their east flank, you defend our shared expansion ok?\")",
+    "expected": [
+      {
+        "name": "chat",
+        "args": {
+          "message": "Going to scout their east flank, you defend our shared expansion ok?"
+        }
+      }
+    ],
+    "why": "Python-style chat call whose message literally contains the words 'scout' and 'defend'. Only the chat call is intended; no scout/defend calls."
+  },
+  {
+    "id": "trick_russian_chat",
+    "shape": "fenced_json",
+    "raw_text": "Враг давит с воздуха, нужно предупредить союзника, а не атаковать в лоб.\n```json\n{\"name\": \"chat\", \"arguments\": {\"message\": \"Союзник, у них много авиации на севере, строй ПВО!\"}}\n```",
+    "expected": [
+      {
+        "name": "chat",
+        "args": {
+          "message": "Союзник, у них много авиации на севере, строй ПВО!"
+        }
+      }
+    ],
+    "why": "Russian-language reasoning leak before a fenced JSON chat call with a Russian message. Exactly one chat call; the prose above must not yield extra calls."
+  },
+  {
+    "id": "noop_long_reasoning",
+    "shape": "name_newline_json",
+    "raw_text": "noop\n{\"reasoning\": \"My economy is healthy, the front line is stable, and the enemy has not made any aggressive moves this cycle. Committing forces now would only expose my engineers and stall my tech progression. The smart play is to do nothing this turn, let my factories finish the current queue, and re-evaluate threats next cycle when I have a clearer picture of enemy positioning.\"}",
+    "expected": [
+      {
+        "name": "noop",
+        "args": {
+          "reasoning": "My economy is healthy, the front line is stable, and the enemy has not made any aggressive moves this cycle. Committing forces now would only expose my engineers and stall my tech progression. The smart play is to do nothing this turn, let my factories finish the current queue, and re-evaluate threats next cycle when I have a clearer picture of enemy positioning."
+        }
+      }
+    ],
+    "why": "A legitimate noop with a long reasoning paragraph (item d). Name-on-its-own-line then JSON args. Exactly one noop call."
+  },
+  {
+    "id": "trick_chat_then_real_scout",
+    "shape": "tool_call_tag",
+    "raw_text": "<tool_call>\n{\"name\": \"chat\", \"arguments\": {\"message\": \"Hold your attack until I confirm their numbers!\"}}\n</tool_call>\n<tool_call>\n{\"name\": \"scout\", \"arguments\": {\"direction\": \"enemy_base\"}}\n</tool_call>",
+    "expected": [
+      {
+        "name": "chat",
+        "args": {
+          "message": "Hold your attack until I confirm their numbers!"
+        }
+      },
+      {
+        "name": "scout",
+        "args": {
+          "direction": "enemy_base"
+        }
+      }
+    ],
+    "why": "Two real calls: a chat whose message contains 'attack', followed by an actual scout call. Parser must produce chat + scout (NOT an attack call from the message text)."
+  },
+  {
+    "id": "neg_truncated_musing",
+    "shape": "negative",
+    "raw_text": "<think>\nFirst I'd want to call get_enemy_army to see what they have, then if their land count is low I could attack with a medium force, otherwise build more units. Let me check the army comp before deci",
+    "expected": [],
+    "why": "Truncated thinking leak that discusses calling get_enemy_army and attack but cuts off before any call is formatted. True negative."
+  },
+  {
+    "id": "trick_chat_set_strategy_word",
+    "shape": "bare_json",
+    "raw_text": "{\"name\": \"chat\", \"arguments\": {\"message\": \"They look like they're going for an early rush, so let's both turtle up and tech for a few minutes.\"}}",
+    "expected": [
+      {
+        "name": "chat",
+        "args": {
+          "message": "They look like they're going for an early rush, so let's both turtle up and tech for a few minutes."
+        }
+      }
+    ],
+    "why": "Bare JSON chat call whose message mentions 'rush' and 'turtle' (set_strategy enum words). Only one chat call intended; no set_strategy call."
+  }
+]
