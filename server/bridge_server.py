@@ -595,12 +595,14 @@ def _adaptive_poll_interval(snapshot: dict, config: dict) -> int:
     enemy_distance = threats.get("nearest_enemy_distance", 9999)
     trigger = snapshot.get("trigger_event", "periodic")
 
-    # Crisis: enemy at the gates
-    if near_base > 20 or enemy_distance < 150:
+    # near_base is now a count of enemy mobile units at the base (B1), so these
+    # thresholds are unit counts, not the old ~1000-scale "Overall" threat scalar.
+    # Crisis: a real force at the gates
+    if near_base >= 8 or enemy_distance < 150:
         return max(8, base_interval // 3)
 
-    # Elevated: some threat detected
-    if near_base > 5 or enemy_distance < 400:
+    # Elevated: a few enemy units near base / closing in
+    if near_base >= 3 or enemy_distance < 400:
         return max(12, base_interval // 2)
 
     # Priority event just happened — check again soon

@@ -1,46 +1,88 @@
 # T017: State Processor — server/state_processor.py
 #
-# Converts a GameStateSnapshot dict into an LLM prompt string.
-# Target: ≤800 tokens total (system + state + instruction).
+# Converts a GameStateSnapshot dict into messages for /api/chat.
+# Returns a list of {"role": ..., "content": ...} dicts.
 #
-# Qwen3.5 /no_think directive: prepended to every system prompt so the model
-# skips chain-of-thought tokens and outputs JSON directly.
+# Qwen3.5 /no_think directive: prepended to system prompt.
 
 from __future__ import annotations
 
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Playstyle prompts (US5 — T046 wires these in)
+# Playstyle prompts
 # ---------------------------------------------------------------------------
 PLAYSTYLE_PROMPTS: dict[str, str] = {
-    "rush":     "Prioritize early T1 attack within 4 minutes. Build fast, attack faster.",
+    "rush": "Prioritize early T1 attack within 4 minutes. Build fast, attack faster.",
     "balanced": "Balance economy and military for sustainable long-term play.",
-    "turtle":   "Maximize base defense before attacking. PDs, shields, then army.",
-    "air":      "Prioritize air factories and gunships for early map control.",
-    "naval":    "Expand to water. Build destroyers for sea control and coastal bombardment.",
+    "turtle": "Maximize base defense before attacking. PDs, shields, then army.",
+    "air": "Prioritize air factories and gunships for early map control.",
+    "naval": "Expand to water. Build destroyers for sea control.",
 }
 
-# ---------------------------------------------------------------------------
-# Difficulty prompts (US5 — T045)
-# ---------------------------------------------------------------------------
 DIFFICULTY_PROMPTS: dict[str, str] = {
-    "easy":   "Play conservatively, react slowly, and occasionally make suboptimal decisions.",
+    "easy": "Play conservatively, react slowly.",
     "normal": "Play competently at a typical human skill level.",
-    "hard":   "Optimize every decision. React instantly. Maximize economy efficiency.",
+    "hard": "Optimize every decision. React instantly. Maximize efficiency.",
+}
+
+PHASE_PROMPTS: dict[str, str] = {
+    "early": "EARLY GAME: your job is to expand mass and pump T1 land via build_units; "
+    "scout once to find the enemy; attack only with 15+ land; reclaim if mass income is low.",
+    "mid": "MID GAME: Expand, tech T2, mixed army+AA, push map control, T2 PD at key spots.",
+    "late": "LATE GAME: Tech T3/experimentals, deny enemy mass, full army pushes, protect economy.",
 }
 
 
 class StateProcessor:
-    """Builds LLM prompts from GameStateSnapshot dicts."""
+    """Builds LLM chat messages from GameStateSnapshot dicts."""
 
     def __init__(self, config: dict) -> None:
         self._config = config
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    def build_messages(
+        self,
+        snapshot: dict[str, Any],
+        config: dict[str, Any],
+        history: list[dict],
+        ally_mode: bool = False,
+        decision_memory=None,
+    ) -> list[dict[str, str]]:
+        """
+        Return a list of chat messages for Ollama /api/chat.
+        System prompt + game state as user message.
+        """
+        bot_cfg = config.get("bot", {})
+        mode = snapshot.get("mode", "opponent")
+        difficulty = bot_cfg.get("difficulty", "normal")
+        playstyle = bot_cfg.get("playstyle", "balanced")
+        chat_language = bot_cfg.get("chat_language", "auto")
 
+        phase = snapshot.get("phase", "early")
+
+        language = self._detect_language(snapshot.get("player_chat", []), chat_language)
+        system_prompt = self._build_system_prompt(
+            mode, difficulty, playstyle, language, ally_mode, phase
+        )
+
+        # Append decision memory to system prompt
+        if decision_memory:
+            memory_block = decision_memory.to_prompt_block()
+            if memory_block:
+                system_prompt += "\n\n" + memory_block
+
+        state_block = self._build_state_block(snapshot)
+        chat_block = self._build_chat_block(snapshot.get("player_chat", []), history)
+        ally_block = self._build_ally_block(snapshot.get("ally")) if ally_mode else ""
+
+        user_content = "\n\n".join(filter(None, [state_block, ally_block, chat_block]))
+
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+    # Keep old API for backwards compat (bridge_server calls build_prompt)
     def build_prompt(
         self,
         snapshot: dict[str, Any],
@@ -48,33 +90,8 @@ class StateProcessor:
         history: list[dict],
         ally_mode: bool = False,
     ) -> str:
-        """
-        Return a complete prompt string for the LLM.
-        Includes: /no_think directive, system context, game state,
-        recent chat, and JSON output instruction.
-        """
-        bot_cfg       = config.get("bot", {})
-        mode          = snapshot.get("mode", "opponent")
-        difficulty    = bot_cfg.get("difficulty", "normal")
-        playstyle     = bot_cfg.get("playstyle", "balanced")
-        chat_language = bot_cfg.get("chat_language", "auto")
-
-        # Detect language from player chat if auto
-        language = self._detect_language(snapshot.get("player_chat", []), chat_language)
-
-        system_prompt = self._build_system_prompt(mode, difficulty, playstyle, language, ally_mode)
-        state_block   = self._build_state_block(snapshot)
-        chat_block    = self._build_chat_block(snapshot.get("player_chat", []), history)
-        ally_block    = self._build_ally_block(snapshot.get("ally")) if ally_mode else ""
-        instruction   = self._build_instruction(language)
-
-        return "\n\n".join(filter(None, [
-            system_prompt,
-            state_block,
-            ally_block,
-            chat_block,
-            instruction,
-        ]))
+        msgs = self.build_messages(snapshot, config, history, ally_mode)
+        return "\n\n".join(m["content"] for m in msgs)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -93,12 +110,19 @@ class StateProcessor:
         return any("\u0400" <= ch <= "\u04ff" for ch in text)
 
     def _build_system_prompt(
-        self, mode: str, difficulty: str, playstyle: str, language: str, ally_mode: bool
+        self,
+        mode: str,
+        difficulty: str,
+        playstyle: str,
+        language: str,
+        ally_mode: bool,
+        phase: str = "early",
     ) -> str:
-        diff_text   = DIFFICULTY_PROMPTS.get(difficulty, DIFFICULTY_PROMPTS["normal"])
-        play_text   = PLAYSTYLE_PROMPTS.get(playstyle, PLAYSTYLE_PROMPTS["balanced"])
-        lang_note   = "Russian" if language == "ru" else "English"
-        mode_desc   = (
+        diff_text = DIFFICULTY_PROMPTS.get(difficulty, DIFFICULTY_PROMPTS["normal"])
+        play_text = PLAYSTYLE_PROMPTS.get(playstyle, PLAYSTYLE_PROMPTS["balanced"])
+        phase_text = PHASE_PROMPTS.get(phase, PHASE_PROMPTS["early"])
+        lang_note = "Russian" if language == "ru" else "English"
+        mode_desc = (
             "cooperate with the human player as a teammate"
             if mode == "ally"
             else "defeat the human player as an opponent"
@@ -107,56 +131,97 @@ class StateProcessor:
         ally_extra = ""
         if ally_mode:
             ally_extra = (
-                "\nYou are a human teammate. When reacting to threats, describe what you just did "
-                "and why in chat_message. Be brief and natural "
-                "(e.g. 'Вижу авиацию у тебя — перехватчики летят'). "
-                "Never be silent when reacting to threats."
+                "\nYou are a human teammate. When reacting to threats, describe what you did "
+                "and why via the chat tool. Be brief and natural."
             )
 
         return (
             "/no_think\n"
-            "You are an AI commander playing Supreme Commander: Forged Alliance as the UEF faction.\n"
-            f"Your role: {mode_desc}.\n"
-            f"Difficulty: {difficulty}. {diff_text}\n"
-            f"Playstyle: {playstyle}. {play_text}\n"
-            f"Always respond in {lang_note}.\n"
-            f"Always respond with valid JSON matching the StrategicDecision schema."
+            f"SupCom:FA AI (UEF). Role: {mode_desc}.\n"
+            f"{difficulty} difficulty. {diff_text} Playstyle: {playstyle}. {play_text}\n"
+            f"Chat language: {lang_note}.\n"
+            f"{phase_text}\n"
+            "You DRIVE the macro game: grow economy, build army, expand, and attack to WIN. "
+            "The base AI only micro-executes your orders.\n"
+            "Every cycle emit at least one ACTION tool "
+            "(build_units/attack/defend/reclaim/set_strategy/expand), not just observations. "
+            "Pick the single highest-impact action:\n"
+            "- low mass income or mass stalled -> build_units engineers, or reclaim\n"
+            "- under ~15 land units -> build_units land\n"
+            "- enemy has air and you lack anti-air -> build_units anti_air\n"
+            "- 15+ land and enemy weak or far -> attack or expand\n"
+            "- enemy at your base -> defend\n"
+            "Scout AT MOST once, only when the enemy position is unknown. NEVER scout twice in a row.\n"
+            "Avoid repeating an action that made no progress in DECISION HISTORY."
             f"{ally_extra}"
         )
 
     def _build_state_block(self, snapshot: dict) -> str:
-        tick        = snapshot.get("tick", 0)
-        game_time_s = snapshot.get("game_time_s", 0)
-        phase       = snapshot.get("phase", "early")
-        trigger     = snapshot.get("trigger_event", "periodic")
-        map_ctrl    = snapshot.get("map_control_pct", 50)
-        strategy    = snapshot.get("current_strategy", "balanced")
+        # Coerce None → default (snapshot may have null values from broken Lua encode)
+        tick = snapshot.get("tick") or 0
+        game_time_s = snapshot.get("game_time_s") or 0
+        phase = snapshot.get("phase") or "early"
+        trigger = snapshot.get("trigger_event") or "periodic"
+        map_ctrl = snapshot.get("map_control_pct") or 50
+        strategy = snapshot.get("current_strategy") or "balanced"
 
-        eco  = snapshot.get("economy", {})
-        units = snapshot.get("units", {})
-        thr   = snapshot.get("threats", {})
+        eco = snapshot.get("economy") or {}
+        units = snapshot.get("units") or {}
+        thr = snapshot.get("threats") or {}
+
+        def _num(d: dict, key: str, default: float) -> float:
+            """Get numeric value with None-coercion."""
+            v = d.get(key)
+            return v if isinstance(v, (int, float)) else default
+
+        # Derived interpretation tags so a /no_think model does not have to infer
+        # economy health from raw numbers (the #1 reason it never builds).
+        mass_inc = _num(eco, "mass_income", 0)
+        mass_st = _num(eco, "mass_stored", 0)
+        mass_max = _num(eco, "mass_storage_max", 1000)
+        en_st = _num(eco, "energy_stored", 0)
+        en_max = _num(eco, "energy_storage_max", 8000)
+        engineers = _num(units, "engineers", 0)
+
+        if mass_inc < 5:
+            mass_tag = "  [LOW MASS INCOME -> expand mexes / reclaim]"
+        elif mass_max > 0 and mass_st >= 0.85 * mass_max:
+            mass_tag = "  [MASS FLOATING -> build more units / factories]"
+        else:
+            mass_tag = ""
+        energy_tag = (
+            "  [ENERGY FLOATING -> build / tech up]"
+            if (en_max > 0 and en_st >= 0.95 * en_max)
+            else ""
+        )
+        idle_tag = (
+            "  [IDLE BUILD POWER -> grow economy]"
+            if (engineers >= 5 and mass_inc < 5)
+            else ""
+        )
 
         lines = [
-            f"=== GAME STATE (Tick {tick}, ~{game_time_s // 60}:{game_time_s % 60:02d} into game) ===",
+            f"=== GAME STATE (Tick {tick}, ~{game_time_s // 60}:{game_time_s % 60:02d}) ===",
             f"Phase: {phase} | Map control: {map_ctrl}% | Trigger: {trigger}",
             "",
             "Economy:",
-            f"  Mass:   {eco.get('mass_stored', 0):.0f}/{eco.get('mass_storage_max', 1000):.0f} stored"
-            f" | +{eco.get('mass_income', 0):.1f}/s",
-            f"  Energy: {eco.get('energy_stored', 0):.0f}/{eco.get('energy_storage_max', 8000):.0f} stored"
-            f" | +{eco.get('energy_income', 0):.1f}/s",
+            f"  Mass:   {_num(eco, 'mass_stored', 0):.0f}/{_num(eco, 'mass_storage_max', 1000):.0f}"
+            f" | +{_num(eco, 'mass_income', 0):.1f}/s{mass_tag}",
+            f"  Energy: {_num(eco, 'energy_stored', 0):.0f}/{_num(eco, 'energy_storage_max', 8000):.0f}"
+            f" | +{_num(eco, 'energy_income', 0):.1f}/s{energy_tag}",
             "",
-            "Military (UEF):",
-            f"  Factories: {units.get('factories', 0)} | Engineers: {units.get('engineers', 0)}",
-            f"  Land: {units.get('land_military', 0)} (T1:{units.get('t1', 0)} T2:{units.get('t2', 0)}"
-            f" T3:{units.get('t3', 0)})"
-            f" | Air: {units.get('air_military', 0)} | Navy: {units.get('navy_military', 0)}",
-            f"  Experimentals: {units.get('experimentals', 0)}",
+            "Military:",
+            f"  Factories: {_num(units, 'factories', 0):.0f}"
+            f" | Engineers: {_num(units, 'engineers', 0):.0f}{idle_tag}",
+            f"  Land: {_num(units, 'land_military', 0):.0f}"
+            f" (T1:{_num(units, 't1', 0):.0f} T2:{_num(units, 't2', 0):.0f}"
+            f" T3:{_num(units, 't3', 0):.0f})"
+            f" | Air: {_num(units, 'air_military', 0):.0f} | Navy: {_num(units, 'navy_military', 0):.0f}",
             "",
             "Situation:",
-            f"  Threat near base: {thr.get('near_base', 0):.0f}",
-            f"  Nearest enemy: {thr.get('nearest_enemy_distance', 9999):.0f} units away",
-            f"  Enemy army estimate: {thr.get('enemy_army_size_estimate', 0)}",
+            f"  Threat near base: {_num(thr, 'near_base', 0):.0f}",
+            f"  Nearest enemy: {_num(thr, 'nearest_enemy_distance', 9999):.0f} units away",
+            f"  Enemy army estimate: {_num(thr, 'enemy_army_size_estimate', 0):.0f}",
             f"  Current strategy: {strategy}",
         ]
         return "\n".join(lines)
@@ -166,14 +231,12 @@ class StateProcessor:
             return ""
         lines = [
             "=== ALLY STATUS ===",
-            f"  Air threat at ally base: {ally.get('air_threat_near_base', 0):.0f}"
+            f"  Air threat: {ally.get('air_threat_near_base', 0):.0f}"
             f" ({'ALERT' if ally.get('under_air_attack') else 'OK'})",
-            f"  Ground threat at ally base: {ally.get('base_threat', 0):.0f}"
+            f"  Ground threat: {ally.get('base_threat', 0):.0f}"
             f" ({'ALERT' if ally.get('under_ground_attack') else 'OK'})",
-            f"  Ally army: {ally.get('army_size', 0)} units"
+            f"  Army: {ally.get('army_size', 0)} units"
             f" ({'LOSING FAST' if ally.get('losing_army_fast') else 'stable'})",
-            f"  Ally mass income: {ally.get('mass_income', 0):.1f}/s"
-            f"{' (STALL)' if ally.get('mass_income', 0) < 3 else ''}",
         ]
         return "\n".join(lines)
 
@@ -188,16 +251,3 @@ class StateProcessor:
         for msg in player_chat[-5:]:
             lines.append(f"  [player]: {msg}")
         return "\n".join(lines)
-
-    def _build_instruction(self, language: str) -> str:
-        lang_hint = "в коротком естественном стиле" if language == "ru" else "briefly and naturally"
-        return (
-            "=== DECISION REQUIRED ===\n"
-            "Respond ONLY with valid JSON (no markdown, no explanation):\n"
-            '{"strategy": "string", "build_priority": ["string"], '
-            '"army_composition": {"land": 0.0, "air": 0.0, "navy": 0.0}, '
-            '"attack_direction": "north|south|east|west|none|null", '
-            '"retreat_threshold": 0.3, '
-            f'"chat_message": "string or null — {lang_hint}, max 100 chars", '
-            '"reasoning": "string, max 200 chars"}'
-        )

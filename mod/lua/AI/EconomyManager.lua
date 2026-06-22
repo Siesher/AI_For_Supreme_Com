@@ -21,10 +21,46 @@ local IDLE_ENGINEER_SCAN_RADIUS     = 100   -- game units
 -- Internal helpers
 -- ---------------------------------------------------------------------------
 
+local MEX_BP            = "ueb1103"  -- UEF T1 Mass Extractor (verified from BuildOrderUEF templates)
+local MEX_SEARCH_RADIUS = 250        -- world units: how far an engineer will travel to claim a mex
+
 local function IsEngineerIdle(unit)
     -- An engineer is idle if it has no orders
     local queue = unit:GetCommandQueue()
     return not queue or table.getn(queue) == 0
+end
+
+-- True if a mass extractor already sits on/next to this marker position.
+local function MarkerHasMex(pos)
+    local ok, units = pcall(GetUnitsInRect, Rect(pos[1] - 2, pos[3] - 2, pos[1] + 2, pos[3] + 2))
+    if ok and units then
+        for _, u in ipairs(units) do
+            if u and not u.Dead and EntityCategoryContains(categories.MASSEXTRACTION, u) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Nearest Mass marker (within MEX_SEARCH_RADIUS) that has no extractor yet and is
+-- not already claimed this pass. `claimed` is a {posKey=true} set to stop two
+-- engineers targeting the same marker in one Tick.
+local function FindNearestOpenMassMarker(from_pos, claimed)
+    local ok, markers = pcall(function() return ScenarioUtils.GetMarkers() end)
+    if not ok or not markers then return nil end
+    local best, best_d = nil, MEX_SEARCH_RADIUS
+    for _, m in pairs(markers) do
+        if type(m) == "table" and m.type == "Mass" and m.position then
+            local p = m.position
+            local key = math.floor(p[1]) .. "_" .. math.floor(p[3])
+            if not (claimed and claimed[key]) and not MarkerHasMex(p) then
+                local d = VDist3(from_pos, p)
+                if d < best_d then best_d = d; best = p end
+            end
+        end
+    end
+    return best
 end
 
 local function FindReclaimNear(pos, radius)
@@ -46,14 +82,24 @@ local function AssignIdleEngineers(brain)
     if not engineers or table.getn(engineers) == 0 then return 0 end
 
     local assigned = 0
+    local claimed_markers = {}  -- posKey -> true, so two engineers don't claim one marker
     for _, eng in ipairs(engineers) do
         if eng and not eng.Dead and IsEngineerIdle(eng) then
             local pos = eng:GetPosition()
 
+            -- 0. HIGHEST PRIORITY: build a mass extractor on the nearest open mass
+            -- marker. This is the economy's growth engine — without it the bot
+            -- never expands mass income (the cause of the ~0.9 mass/s stall).
+            local marker = FindNearestOpenMassMarker(pos, claimed_markers)
+            if marker then
+                local ok_b = pcall(IssueBuildMobile, {eng}, marker, MEX_BP, {})
+                if ok_b then
+                    claimed_markers[math.floor(marker[1]) .. "_" .. math.floor(marker[3])] = true
+                    assigned = assigned + 1
+                end
             -- 1. Try to reclaim nearby wreckage
-            local reclaim_target = FindReclaimNear(pos, IDLE_ENGINEER_SCAN_RADIUS)
-            if reclaim_target then
-                IssueReclaim({eng}, reclaim_target)
+            elseif FindReclaimNear(pos, IDLE_ENGINEER_SCAN_RADIUS) then
+                IssueReclaim({eng}, FindReclaimNear(pos, IDLE_ENGINEER_SCAN_RADIUS))
                 assigned = assigned + 1
             else
                 -- 2. Try to assist a nearby factory

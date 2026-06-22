@@ -159,6 +159,7 @@ local FactoryQueue = {
     balanced  = { "uel0106", "uel0106", "uel0101" },            -- Mixed
     air       = { "uea0101", "uea0101", "uea0101" },            -- Interceptors
     naval     = { "ues0103", "ues0103" },                       -- Frigates
+    engineers = { "uel0101", "uel0101" },                       -- T1 engineers (build_units priority=engineers)
 }
 
 -- ---------------------------------------------------------------------------
