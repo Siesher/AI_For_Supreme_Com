@@ -35,6 +35,8 @@ class PipeServer:
         self._command_queue  = command_queue    # bridge_server → PipeServer
         self._connected      = False
         self._pipe_handle: Optional[object] = None
+        # Pending request-response futures keyed by request_id
+        self._pending_requests: dict[str, asyncio.Future] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -52,7 +54,50 @@ class PipeServer:
                 log.warning("Pipe disconnected (%s). Reconnecting in %ss…",
                             exc, RECONNECT_DELAY_S)
                 self._connected = False
+                # Cancel any pending request-response futures
+                for fut in self._pending_requests.values():
+                    if not fut.done():
+                        fut.cancel()
+                self._pending_requests.clear()
             await asyncio.sleep(RECONNECT_DELAY_S)
+
+    async def send_and_wait_response(
+        self,
+        msg: dict,
+        timeout: float = 5.0,
+    ) -> Optional[dict]:
+        """
+        Send a message to Lua and wait for a response with matching request_id.
+
+        Used for observation requests and action executions during ReAct loop.
+        Returns the response dict, or None on timeout/error.
+        """
+        if not self._connected or self._pipe_handle is None:
+            log.warning("send_and_wait: pipe not connected")
+            return None
+
+        request_id = msg.get("request_id")
+        if not request_id:
+            log.error("send_and_wait: message has no request_id")
+            return None
+
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._pending_requests[request_id] = fut
+
+        try:
+            raw = json.dumps(msg, ensure_ascii=False)
+            await loop.run_in_executor(None, self._write_message, self._pipe_handle, raw)
+            result = await asyncio.wait_for(fut, timeout=timeout)
+            return result
+        except asyncio.TimeoutError:
+            log.warning("send_and_wait: timeout for request_id=%s", request_id)
+            return None
+        except Exception as exc:
+            log.error("send_and_wait: error for request_id=%s: %s", request_id, exc)
+            return None
+        finally:
+            self._pending_requests.pop(request_id, None)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -123,7 +168,11 @@ class PipeServer:
                 pass
 
     async def _read_loop(self, handle, loop: asyncio.AbstractEventLoop) -> None:
-        """Continuously read snapshots from the DLL and put into snapshot_queue."""
+        """Continuously read messages from the DLL.
+
+        Routes observation_result / action_result to pending futures,
+        everything else (snapshots, heartbeats) to snapshot_queue.
+        """
         while True:
             msg = await loop.run_in_executor(None, self._read_message, handle)
             if msg is None:
@@ -131,11 +180,28 @@ class PipeServer:
                 return
             try:
                 data = json.loads(msg)
-                await self._snapshot_queue.put(data)
-                log.debug("Snapshot received: type=%s tick=%s",
-                          data.get("type"), data.get("data", {}).get("tick"))
             except json.JSONDecodeError as exc:
                 log.warning("Malformed JSON from game, discarding: %s", exc)
+                continue
+
+            msg_type = data.get("type", "")
+
+            # Route request-response messages to pending futures
+            if msg_type in ("observation_result", "action_result"):
+                req_id = data.get("request_id")
+                fut = self._pending_requests.get(req_id)
+                if fut and not fut.done():
+                    fut.set_result(data)
+                    log.debug("Response routed: type=%s request_id=%s", msg_type, req_id)
+                else:
+                    log.warning("Unexpected response: type=%s request_id=%s (no pending future)",
+                                msg_type, req_id)
+                continue
+
+            # Everything else goes to the snapshot queue
+            await self._snapshot_queue.put(data)
+            log.debug("Snapshot received: type=%s tick=%s",
+                      data.get("type"), data.get("data", {}).get("tick"))
 
     async def _write_loop(self, handle, loop: asyncio.AbstractEventLoop) -> None:
         """Drain the command queue and write commands to the DLL."""

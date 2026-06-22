@@ -1,0 +1,14 @@
+-- Placeholder so the File-IPC directory ships INSIDE the mod and is therefore
+-- non-empty when SupCom mounts the mod's VFS tree.
+--
+-- Why this matters: the Python bridge writes command files (cmd_NNNN.lua) into
+-- this directory at runtime. SupCom's 2007 VFS indexes a mod's directories at
+-- MOUNT time. If `ipc/` is empty (or absent) at mount, the engine does not treat
+-- it as a live directory and `DiskGetFileInfo` never sees files created later --
+-- so the UI poll loop in hook/lua/ui/game/gamemain.lua waits forever and the bot
+-- can receive snapshots but never executes the LLM's decisions.
+--
+-- Keeping this committed file here guarantees `ipc/` exists and is non-empty at
+-- every launch. The bridge's cleanup() only deletes cmd_*.lua, so this survives.
+-- It is never imported by our code; the assignment below is inert if ever loaded.
+LLMIpcPlaceholder = true
