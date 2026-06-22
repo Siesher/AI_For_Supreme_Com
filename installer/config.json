@@ -12,7 +12,7 @@
       "ollama":        { "api_style": "openai", "base_url": "http://localhost:11434/v1", "model_deep": "qwen3.5:14b",                  "model_fast": "qwen3.5:4b" },
       "ollama_native": { "api_style": "ollama", "base_url": "http://localhost:11434",    "model_deep": "qwen3.5:14b",                  "model_fast": "qwen3.5:4b" },
       "lmstudio":      { "api_style": "openai", "base_url": "http://localhost:1234/v1",  "model_deep": "qwen3.5-14b",                  "model_fast": "qwen3.5-4b" },
-      "vllm":          { "api_style": "openai", "base_url": "http://localhost:8000/v1",  "model_deep": "Qwen/Qwen3.5-14B-Instruct",    "model_fast": "Qwen/Qwen3.5-4B-Instruct" },
+      "vllm":          { "api_style": "openai", "base_url": "http://localhost:8000/v1",  "model_deep": "qwen3-14b-nvfp4",             "model_fast": "qwen3-14b-nvfp4" },
       "tabbyapi":      { "api_style": "openai", "base_url": "http://localhost:5000/v1",  "model_deep": "Qwen3.5-14B-exl3",             "model_fast": "Qwen3.5-4B-exl3" }
     },
     "backend": "ollama",

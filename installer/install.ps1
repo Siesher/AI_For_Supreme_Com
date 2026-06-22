@@ -1,4 +1,4 @@
-# T042/T043: Guided installer — installer/install.ps1
+﻿# T042/T043: Guided installer — installer/install.ps1
 #
 # Steps:
 #   1. Verify game path exists

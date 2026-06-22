@@ -68,10 +68,23 @@ Switch engines by changing **one key** — `llm.engine` — to a preset in `llm.
 
 All `openai` engines go through `server/openai_client.py` (`/v1/chat/completions` with `tools`).
 `ollama_native` uses `server/llm_client.py`. `hf_turbo` (set legacy `llm.backend`) uses `server/hf_llm_client.py`.
-Engine speed is NOT the bottleneck for this bot (even 31 tok/s on 14B Q4 meets the 3-4 s/decision budget),
-so the default favors native-Windows reliability + game co-residency over raw FP4 throughput.
+Engine speed is NOT the bottleneck for this bot **as long as all layers are on the GPU** (full-offload 14B
+Q4 runs ~35-44 tok/s = ~0.6 s/decision). The default favors native-Windows reliability + game co-residency
+over raw FP4 throughput. CPU-spilled layers (see below) collapse this to ~0.8 tok/s and break every cycle.
 
-**KoboldCpp quick start:** `koboldcpp.exe --model qwen3.5-14b-q4_k_m.gguf --usecuda --contextsize 8192 --port 5001`
+**KoboldCpp quick start:** `powershell -File installer/serve_koboldcpp.ps1 -Restart`
+(forces full GPU offload + waits for `:5001/v1`; equivalently
+`koboldcpp.exe --model Qwen3-14B-Q4_K_M.gguf --usecublas --gpulayers 999 --contextsize 4096 --jinja --jinja_tools --jinjathink false --skiplauncher --port 5001`)
+- `--gpulayers 999` (all layers on GPU) is the **#1 latency control**. Symptom of CPU spill: VRAM used ~6 GB
+  not ~13 GB, ~0.8 tok/s, every ReAct cycle times out into a `noop`. On a 16 GB RTX 5070 Ti a 14B Q4 + 4096
+  ctx occupies ~13 GB. Verify with `nvidia-smi --query-gpu=memory.used --format=csv`.
+- **Do NOT pass `--flashattention`** — KoboldCpp 1.115.x has flash attention **default-on** (only
+  `--noflashattention` exists); the unknown flag makes argparse abort the launch.
+- `--usecublas`, not `--usecuda`. `--contextsize` should match `llm.num_ctx` in config.json (4096) — larger
+  just wastes VRAM the prompt builder never uses, squeezing the co-resident game.
+- `--jinja_tools` routes tool calls through Qwen3's native `<tool_call>` template (needs `--jinja`); without
+  it KoboldCpp's AutoGuess adapter emits plain text that only the XML/text fallback catches. `--jinjathink
+  false` disables Qwen3 thinking.
 
 **TurboQuant** (arXiv:2504.19874): online vector quantization for KV cache.
 Keys use Q_prod (MSE + QJL residual), values use Q_mse (rotation + Lloyd-Max codebook).
