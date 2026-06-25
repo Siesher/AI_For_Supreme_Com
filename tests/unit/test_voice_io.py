@@ -6,7 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "server"))
 
 from voice_io import (
+    SpeechListener,
     SpeechSpeaker,
+    Utterance,
     VoiceConfig,
     VoiceIO,
     VoiceState,
@@ -49,6 +51,12 @@ def test_voice_config_reads_nested_block():
 def _io(mode="toggle", **kw):
 
     return VoiceIO(VoiceConfig(gate_mode=mode, stt_min_chars=kw.get("min_chars", 2)))
+
+
+def _listener(text, mode="toggle"):
+    io = VoiceIO(VoiceConfig(gate_mode=mode))
+    lis = SpeechListener(io, transcribe_fn=lambda pcm: text)
+    return io, lis
 
 
 def test_toggle_gate_cycles_listening():
@@ -202,3 +210,29 @@ def test_speaker_stop_current_skips_play():
     asyncio.run(drive())
     assert played == []  # play skipped due to abort
     assert done == [1]  # on_done still fired
+
+
+def test_listener_emits_when_listening():
+    io, lis = _listener("атакуй сюда")
+    io.on_button_press()  # LISTENING
+    emitted = asyncio.run(lis.on_segment(b"pcm", 1.0, 2.0))
+    assert emitted is True
+    utt = lis.utterances.get_nowait()
+    assert isinstance(utt, Utterance)
+    assert utt.text == "атакуй сюда"
+    assert utt.t0 == 1.0 and utt.t1 == 2.0
+
+
+def test_listener_drops_when_not_listening():
+    io, lis = _listener("привет")  # gate never on -> IDLE
+    emitted = asyncio.run(lis.on_segment(b"pcm", 0.0, 1.0))
+    assert emitted is False
+    assert lis.utterances.empty()
+
+
+def test_listener_drops_short_text():
+    io, lis = _listener("a")  # below default min_chars=2
+    io.on_button_press()
+    emitted = asyncio.run(lis.on_segment(b"pcm", 0.0, 1.0))
+    assert emitted is False
+    assert lis.utterances.empty()

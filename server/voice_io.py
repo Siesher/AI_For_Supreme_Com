@@ -189,3 +189,33 @@ class SpeechSpeaker:
             finally:
                 if self._on_done:
                     self._on_done()
+
+
+class SpeechListener:
+    """Turns finished speech segments into gated, filtered Utterances."""
+
+    def __init__(self, io: VoiceIO, transcribe_fn: Callable[[bytes], str]) -> None:
+        self._io = io
+        self._transcribe = transcribe_fn
+        self.utterances: asyncio.Queue = asyncio.Queue(maxsize=16)
+
+    async def on_segment(self, pcm: bytes, t0: float, t1: float) -> bool:
+        if not self._io.accepting_speech():
+            return False  # gate closed / echo-guard
+        try:
+            text = await asyncio.to_thread(self._transcribe, pcm)
+        except Exception as exc:
+            log.warning("STT failed: %s", exc)
+            return False
+        text = (text or "").strip()
+        if not self._io.should_emit(text):
+            return False
+        # Re-check the gate after the (possibly slow) transcription.
+        if not self._io.accepting_speech():
+            return False
+        try:
+            self.utterances.put_nowait(Utterance(text=text, t0=t0, t1=t1))
+        except asyncio.QueueFull:
+            log.warning("Utterance queue full; dropping: %r", text)
+            return False
+        return True
