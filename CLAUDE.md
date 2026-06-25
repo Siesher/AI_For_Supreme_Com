@@ -86,6 +86,42 @@ over raw FP4 throughput. CPU-spilled layers (see below) collapse this to ~0.8 to
   it KoboldCpp's AutoGuess adapter emits plain text that only the XML/text fallback catches. `--jinjathink
   false` disables Qwen3 thinking.
 
+### Voice mode (Phase 1)
+
+Requires `voice.enabled = true` in `installer/config.json` and the optional deps below.
+Ship default is `false` — existing setups are unaffected.
+
+**1. Install deps**
+```powershell
+.\.venv\Scripts\python.exe -m pip install faster-whisper sounddevice piper-tts onnxruntime pynput numpy
+```
+
+**2. Download the Piper voice model** (ru_RU-irina-medium):
+```powershell
+# Download .onnx + .json from https://github.com/rhasspy/piper/releases
+# Place in e.g. C:\models\piper\ru_RU-irina-medium.onnx
+# Then set "tts": { "voice": "C:\\models\\piper\\ru_RU-irina-medium.onnx" }
+```
+
+**3. Flip the switch** in `installer/config.json`:
+```json
+"voice": { "enabled": true, ... }
+```
+
+**4. Pick your mouse button**: default `"x1"` (M4, side-back button).
+Change to `"x2"` for M5 (side-forward). Mode `"toggle"` = press once on, press again off;
+`"push"` = hold to speak. Set in `"gate": { "mode": "toggle", "mouse_button": "x1" }`.
+
+**5. Self-test** (mic + STT + TTS, no game needed):
+```powershell
+.\.venv\Scripts\python.exe server/voice_io.py --selftest
+```
+Expected: logs "Voice mic loop active", you press the side button, say a phrase in Russian,
+it prints the transcript and speaks it back via TTS. Silero VAD model (~1 MB) downloads
+automatically to `~/.cache/silero-vad/silero_vad.onnx` on first run.
+
+---
+
 **TurboQuant** (arXiv:2504.19874): online vector quantization for KV cache.
 Keys use Q_prod (MSE + QJL residual), values use Q_mse (rotation + Lloyd-Max codebook).
 Config: `turbo_quant.key_bits`, `turbo_quant.value_bits` in config.json.

@@ -231,6 +231,8 @@ class VoiceSession:
         self.io = io
         self.listener = listener
         self.speaker = speaker
+        # Set by build_voice_session when real backends are wired; None = no hardware.
+        self._start_mic: Callable | None = None
 
     @property
     def utterances(self) -> asyncio.Queue:
@@ -240,18 +242,238 @@ class VoiceSession:
         self.speaker.enqueue(text)
 
     async def run(self) -> None:
-        # Phase 1: the speaker worker; the real mic loop is added by _init_backends.
-        await self.speaker.run()
+        speaker_task = asyncio.create_task(self.speaker.run())
+        try:
+            await asyncio.gather(speaker_task, self._mic_loop())
+        except asyncio.CancelledError:
+            speaker_task.cancel()
+            try:
+                await speaker_task
+            except asyncio.CancelledError:
+                pass
+            raise
+        except Exception as exc:
+            log.warning("Voice runtime stopped: %s", exc)
+            speaker_task.cancel()
+
+    async def _mic_loop(self) -> None:
+        """Capture mic audio, run Silero VAD, emit speech segments to the listener.
+
+        No-op when _start_mic is None (unit-test / voice-off paths); real capture
+        runs only after build_voice_session injected hardware refs via start_mic_fn.
+        All heavy library imports happen in _init_backends; here we use refs that
+        were stashed on self by start_mic_fn.
+        """
+        import time
+
+        if self._start_mic is None:
+            # Backends absent (tests / voice disabled); idle coroutine.
+            return
+
+        # Library references injected by start_mic_fn inside _init_backends.
+        sd = self._sd  # sounddevice module
+        np = self._np  # numpy module
+        SR = self._SR  # sample rate (16000)
+        mouse = self._mouse  # pynput.mouse module
+        vad = self._vad_session  # onnxruntime InferenceSession (Silero VAD)
+
+        VAD_FRAME = 512  # 32 ms at 16 kHz — Silero v4 native frame
+        VAD_THRESHOLD = 0.5
+        silence_timeout_s = self.io.cfg.vad_silence_timeout_ms / 1000.0
+
+        # Silero VAD ONNX v4 LSTM state tensors; shape [2, 1, 64].
+        # ASSUMPTION: ONNX input names are "input", "sr", "h", "c";
+        #             outputs are "output" (prob [1,1]), "hn", "cn" ([2,1,64]).
+        _state: dict = {
+            "h": np.zeros((2, 1, 64), dtype=np.float32),
+            "c": np.zeros((2, 1, 64), dtype=np.float32),
+            "in_speech": False,
+            "t0": 0.0,
+            "last_speech_t": 0.0,
+        }
+
+        # Map config string to pynput Button; fall back to x1 on AttributeError.
+        # ASSUMPTION: pynput.mouse.Button.x1 (M4) and .x2 (M5) exist on Windows
+        #             with the user's mouse driver.
+        _button_attr = self.io.cfg.gate_mouse_button  # "x1" | "x2" | "left" etc.
+        target_button = getattr(mouse.Button, _button_attr, mouse.Button.x1)
+
+        def _on_click(x, y, button, pressed) -> None:
+            if button == target_button:
+                if pressed:
+                    self.io.on_button_press()
+                else:
+                    self.io.on_button_release()
+
+        mouse_listener = mouse.Listener(on_click=_on_click)
+        mouse_listener.start()
+
+        # Audio buffer: list of raw int16 byte chunks assembled per utterance.
+        _audio_buf: list[bytes] = []
+        event_loop = asyncio.get_event_loop()
+
+        def _audio_callback(indata: np.ndarray, frames: int, time_info, status) -> None:
+            """sounddevice InputStream callback (runs in a background thread)."""
+            if status:
+                log.debug("sounddevice status: %s", status)
+
+            pcm = indata[:, 0].copy()  # mono int16 samples, shape [frames]
+
+            i = 0
+            while i + VAD_FRAME <= len(pcm):
+                chunk = pcm[i : i + VAD_FRAME]
+                chunk_f32 = chunk.astype(np.float32) / 32768.0
+                sr_arr = np.array(SR, dtype=np.int64)
+
+                # Run one VAD frame; update stateful LSTM cells in _state dict.
+                out = vad.run(
+                    None,
+                    {
+                        "input": chunk_f32.reshape(1, -1),
+                        "sr": sr_arr,
+                        "h": _state["h"],
+                        "c": _state["c"],
+                    },
+                )
+                prob = float(out[0][0][0])
+                _state["h"] = out[1]
+                _state["c"] = out[2]
+
+                now = time.monotonic()
+                is_speech = prob >= VAD_THRESHOLD
+
+                if is_speech:
+                    _state["last_speech_t"] = now
+                    if not _state["in_speech"]:
+                        _state["in_speech"] = True
+                        _state["t0"] = now
+                        _audio_buf.clear()
+                        log.debug("VAD: speech start (prob=%.2f)", prob)
+                    _audio_buf.append(chunk.tobytes())
+                elif _state["in_speech"]:
+                    # Still buffering tail frames during silence window.
+                    _audio_buf.append(chunk.tobytes())
+                    if (now - _state["last_speech_t"]) >= silence_timeout_s:
+                        # Silence timeout reached — segment complete.
+                        _state["in_speech"] = False
+                        assembled = b"".join(_audio_buf)
+                        t0_snap = _state["t0"]
+                        t1 = now
+                        log.debug(
+                            "VAD: speech end (%.1fs, %d bytes)",
+                            t1 - t0_snap,
+                            len(assembled),
+                        )
+                        asyncio.run_coroutine_threadsafe(
+                            self.listener.on_segment(assembled, t0_snap, t1),
+                            event_loop,
+                        )
+                        _audio_buf.clear()
+
+                i += VAD_FRAME
+
+        try:
+            with sd.InputStream(
+                samplerate=SR,
+                channels=1,
+                dtype="int16",
+                blocksize=VAD_FRAME,
+                device=self.io.cfg.input_device,
+                callback=_audio_callback,
+            ):
+                log.info(
+                    "Voice mic loop active (button=%s, mode=%s)",
+                    self.io.cfg.gate_mouse_button,
+                    self.io.cfg.gate_mode,
+                )
+                while True:
+                    await asyncio.sleep(0.1)
+        except Exception as exc:
+            log.warning("Mic capture error: %s", exc)
+            raise
+        finally:
+            mouse_listener.stop()
+            log.info("Voice mic loop stopped")
 
 
 def _init_backends(cfg: VoiceConfig):
-    """Construct real STT/TTS/audio backends. Raises on any failure.
+    """Construct real STT/TTS/audio/VAD backends.  All heavy imports are local.
 
-    Returns a tuple (transcribe_fn, synth_fn, play_fn, start_mic_fn). Implemented
-    fully in Task 8 (real backends); Task 6 only needs this symbol to exist so the
-    factory's failure path is testable.
+    Returns (transcribe_fn, synth_fn, play_fn, start_mic_fn).
+    Raises ImportError / RuntimeError / OSError on any missing dep or model file;
+    build_voice_session catches everything and degrades to voice-off.
     """
-    raise RuntimeError("real backends not wired yet (Task 8)")
+    import urllib.request
+    from pathlib import Path as _Path
+
+    import numpy as np
+    import onnxruntime as ort
+    import sounddevice as sd
+    from faster_whisper import WhisperModel
+    from piper import PiperVoice  # piper-tts package
+    from pynput import mouse
+
+    SR = 16000  # whisper + silero sample rate
+
+    # --- Silero VAD ONNX model (download once to ~/.cache/silero-vad/) ---
+    # ASSUMPTION: silero_vad.onnx is v4; ONNX inputs "input","sr","h","c";
+    #             outputs "output" [1,1], "hn" [2,1,64], "cn" [2,1,64].
+    _VAD_CACHE = _Path.home() / ".cache" / "silero-vad" / "silero_vad.onnx"
+    _VAD_URL = (
+        "https://github.com/snakers4/silero-vad/raw/master"
+        "/src/silero_vad/data/silero_vad.onnx"
+    )
+    if not _VAD_CACHE.exists():
+        log.info("Silero VAD model not found; downloading to %s ...", _VAD_CACHE)
+        _VAD_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(_VAD_URL, str(_VAD_CACHE))
+    vad_session = ort.InferenceSession(str(_VAD_CACHE))
+
+    # --- STT: faster-whisper ---
+    model = WhisperModel(
+        cfg.stt_model, device=cfg.stt_device, compute_type=cfg.stt_compute_type
+    )
+
+    # --- TTS: piper-tts ---
+    # ASSUMPTION: cfg.tts_voice is a path or a name accepted by PiperVoice.load().
+    #             Users must download the ONNX+JSON voice from
+    #             https://github.com/rhasspy/piper/releases and set tts.voice
+    #             to the .onnx file path (or the bare name if piper-tts resolves it).
+    # ASSUMPTION: voice.config.sample_rate is a plain int attribute (e.g. 22050).
+    voice = PiperVoice.load(cfg.tts_voice)
+
+    def transcribe_fn(pcm: bytes) -> str:
+        """Transcribe raw int16 PCM bytes to text via faster-whisper."""
+        audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        # ASSUMPTION: model.transcribe() returns (segments_generator, TranscriptionInfo).
+        segments, _ = model.transcribe(
+            audio, language=cfg.stt_language, vad_filter=False
+        )
+        return " ".join(s.text for s in segments).strip()
+
+    def synth_fn(text: str) -> bytes:
+        """Synthesise text to raw int16 PCM via piper-tts."""
+        # ASSUMPTION: PiperVoice.synthesize_stream_raw(text) returns Iterable[bytes].
+        chunks = bytearray()
+        for chunk in voice.synthesize_stream_raw(text):
+            chunks.extend(chunk)
+        return bytes(chunks)
+
+    def play_fn(pcm: bytes) -> None:
+        """Play raw int16 PCM through sounddevice (blocking until done)."""
+        audio = np.frombuffer(pcm, dtype=np.int16)
+        sd.play(audio, samplerate=voice.config.sample_rate, device=cfg.output_device)
+        sd.wait()
+
+    def start_mic_fn(session: VoiceSession) -> None:
+        """Inject library references into the session for use in _mic_loop."""
+        session._sd = sd
+        session._np = np
+        session._SR = SR
+        session._mouse = mouse
+        session._vad_session = vad_session
+
+    return transcribe_fn, synth_fn, play_fn, start_mic_fn
 
 
 def build_voice_session(cfg: VoiceConfig) -> VoiceSession | None:
@@ -260,7 +482,7 @@ def build_voice_session(cfg: VoiceConfig) -> VoiceSession | None:
         log.info("Voice disabled in config (voice.enabled=false)")
         return None
     try:
-        transcribe_fn, synth_fn, play_fn, _start_mic = _init_backends(cfg)
+        transcribe_fn, synth_fn, play_fn, start_mic = _init_backends(cfg)
     except Exception as exc:
         log.warning("Voice backends unavailable, running without voice: %s", exc)
         return None
@@ -274,7 +496,10 @@ def build_voice_session(cfg: VoiceConfig) -> VoiceSession | None:
     )
     io._stop_speaking_cb = speaker.stop_current
     listener = SpeechListener(io, transcribe_fn)
-    return VoiceSession(io, listener, speaker)
+    sess = VoiceSession(io, listener, speaker)
+    sess._start_mic = start_mic  # sentinel: real backends present
+    start_mic(sess)  # inject sd / np / SR / mouse / vad_session refs
+    return sess
 
 
 def build_voice_snapshot(latest_snapshot: dict | None, text: str) -> dict:
@@ -290,3 +515,58 @@ def build_voice_snapshot(latest_snapshot: dict | None, text: str) -> dict:
     snap["player_chat"] = [text]
     snap["trigger_event"] = "player_chat"
     return snap
+
+
+def _selftest() -> int:
+    """Offline mic->STT->TTS smoke test.  Speak after the prompt.
+
+    Run: .venv/Scripts/python.exe server/voice_io.py --selftest
+    Expected: logs "Voice mic loop active", you speak Russian while holding/toggling
+    the configured side button, it prints the transcript and speaks it back.
+    """
+    import time
+
+    logging.basicConfig(level=logging.INFO)
+    cfg = VoiceConfig(enabled=True)
+    sess = build_voice_session(cfg)
+    if sess is None:
+        log.error(
+            "Voice backends unavailable — install deps and check mic/voice model."
+        )
+        return 1
+
+    print(
+        f"Voice ready.  Press mouse button '{cfg.gate_mouse_button}' "
+        f"({cfg.gate_mode} mode) and say something in Russian.  "
+        "Listening for 10 seconds..."
+    )
+
+    async def _run() -> None:
+        run_task = asyncio.create_task(sess.run())
+        deadline = time.monotonic() + 10.0
+        try:
+            while time.monotonic() < deadline:
+                try:
+                    utt = await asyncio.wait_for(sess.utterances.get(), timeout=0.5)
+                    print(f"Transcript: {utt.text!r}")
+                    log.info("Speaking back: %r", utt.text)
+                    sess.speak(utt.text)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            run_task.cancel()
+            try:
+                await run_task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(_run())
+    print("Selftest complete.")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys as _sys
+
+    if "--selftest" in _sys.argv:
+        raise SystemExit(_selftest())

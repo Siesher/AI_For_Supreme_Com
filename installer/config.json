@@ -62,5 +62,17 @@
     "log_enabled": true,
     "log_path": "%ProgramData%\\FAForever\\logs\\llm_ai_decisions.log"
   },
+  "voice": {
+    "enabled": false,
+    "stt":  { "model": "small", "language": "ru", "device": "cpu", "compute_type": "int8",
+              "min_speech_ms": 400, "min_chars": 2 },
+    "tts":  { "engine": "piper", "voice": "ru_RU-irina-medium", "max_pending": 2 },
+    "vad":  { "engine": "silero", "silence_timeout_ms": 800 },
+    "gate": { "mode": "toggle", "mouse_button": "x1" },
+    "echo_guard": true,
+    "input_device": null,
+    "output_device": null,
+    "debug_dump_audio": false
+  },
   "version": "1.0.0"
 }
