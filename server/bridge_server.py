@@ -357,11 +357,18 @@ async def main(config_path: str) -> None:
     memory_size = config.get("bot", {}).get("decision_memory_size", 10)
     decision_memory = DecisionMemoryCls(memory_size) if DecisionMemoryCls else None
 
+    # Voice I/O (Phase 1): spoken utterances -> synthetic priority snapshots,
+    # bot chat replies -> TTS. Degrades to no-op if unavailable.
+    from voice_io import load_voice_config, build_voice_session
+
+    voice = build_voice_session(load_voice_config(config))
+    shared_state: dict = {"snapshot": None}
+
     # Run pipe server, file IPC poller, decision loop, and FA process watcher
-    await asyncio.gather(
+    coros = [
         pipe_server.start(),
         _watch_and_inject(),
-        _file_ipc_poll(file_ipc, snapshot_queue),
+        _file_ipc_poll(file_ipc, snapshot_queue, shared_state),
         _decision_loop(
             snapshot_queue,
             command_queue,
@@ -376,19 +383,30 @@ async def main(config_path: str) -> None:
             decision_memory,
             file_ipc=file_ipc,
             file_react_loop=file_react_loop,
+            voice=voice,
         ),
-    )
+    ]
+    if voice:
+        coros.append(voice.run())
+        coros.append(_voice_loop(voice, shared_state, snapshot_queue))
+    await asyncio.gather(*coros)
 
 
-async def _file_ipc_poll(file_ipc, snapshot_queue: asyncio.Queue) -> None:
+async def _file_ipc_poll(
+    file_ipc, snapshot_queue: asyncio.Queue, shared: dict | None = None
+) -> None:
     """Poll game log for [LLM_SNAP] lines and feed them to the decision loop.
 
     Outbound: Sim → Sync → UI → LOG("[LLM_SNAP]json") → game log → here.
+    When *shared* is provided, records the latest snapshot so _voice_loop can
+    clone it for synthetic voice-driven snapshots.
     """
     log.info("File IPC poller started — tailing game logs in %s", file_ipc.log_dir)
     while True:
         snapshot = file_ipc.read_snapshot()
         if snapshot:
+            if shared is not None:
+                shared["snapshot"] = snapshot
             log.info(
                 "File IPC: snapshot from game log (tick=%s trigger=%s)",
                 snapshot.get("tick"),
@@ -402,6 +420,51 @@ async def _file_ipc_poll(file_ipc, snapshot_queue: asyncio.Queue) -> None:
                 }
             )
         await asyncio.sleep(1)
+
+
+async def _voice_loop(voice, shared: dict, snapshot_queue: asyncio.Queue) -> None:
+    """Turn spoken utterances into synthetic priority snapshots.
+
+    Waits on *voice.utterances*, clones the latest real snapshot from *shared*,
+    injects the spoken text as a player_chat trigger, and enqueues a snapshot
+    envelope so the decision loop processes it immediately.
+    """
+    from voice_io import build_voice_snapshot
+
+    log.info("Voice loop started — listening for spoken utterances")
+    while True:
+        utt = await voice.utterances.get()
+        text = getattr(utt, "text", "") or ""
+        if not text:
+            continue
+        snap = build_voice_snapshot(shared.get("snapshot"), text)
+        log.info("Voice: utterance -> synthetic snapshot: %r", text)
+        await snapshot_queue.put({"type": "snapshot", "data": snap, "_source": "file"})
+
+
+def _speak_chat_messages(
+    decision: dict, iterations: list, chat_history: list, voice
+) -> None:
+    """Append bot chat messages to history and, if voice is on, speak them.
+
+    Mutates *chat_history* in-place (appends). Caller is responsible for
+    trimming the list afterward.  When *voice* is None the function behaves
+    identically to the old inline loop (history-only, no TTS).
+    """
+
+    def _handle(tc: dict) -> None:
+        if tc.get("name") == "chat":
+            msg_text = tc.get("args", {}).get("message", "")
+            if msg_text:
+                chat_history.append({"role": "bot", "text": msg_text})
+                if voice:
+                    voice.speak(msg_text)
+
+    for tc in decision.get("tool_calls", []):
+        _handle(tc)
+    for it in iterations:
+        for tc in it.get("tool_calls", []):
+            _handle(tc)
 
 
 async def _decision_loop(
@@ -418,6 +481,7 @@ async def _decision_loop(
     decision_memory,
     file_ipc=None,
     file_react_loop=None,
+    voice=None,
 ) -> None:
     """
     Main decision loop: consume snapshots, run ReAct cycle, emit commands.
@@ -541,22 +605,9 @@ async def _decision_loop(
             if decision_logger:
                 decision_logger.log(snapshot, decision, latency_ms, fallback_used)
 
-            # Extract chat messages for history
-            for tc in decision.get("tool_calls", []):
-                if tc["name"] == "chat":
-                    msg_text = tc.get("args", {}).get("message", "")
-                    if msg_text:
-                        chat_history.append({"role": "bot", "text": msg_text})
-                        chat_history = chat_history[-10:]
-
-            # Also check iteration data for chat calls
-            for it in iterations:
-                for tc in it.get("tool_calls", []):
-                    if tc.get("name") == "chat":
-                        msg_text = tc.get("args", {}).get("message", "")
-                        if msg_text:
-                            chat_history.append({"role": "bot", "text": msg_text})
-                            chat_history = chat_history[-10:]
+            # Extract chat messages for history (+ speak them when voice is on)
+            _speak_chat_messages(decision, iterations, chat_history, voice)
+            chat_history = chat_history[-10:]
 
             # Compute adaptive poll interval based on threat level
             decision["poll_interval_override"] = _adaptive_poll_interval(
