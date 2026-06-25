@@ -148,6 +148,11 @@ class SpeechSpeaker:
         self._abort = False
 
     def enqueue(self, text: str) -> None:
+        """Queue text for TTS playback (drops oldest past max_pending).
+
+        Must be called from the asyncio event-loop thread: the wake Event's
+        set/clear is not safe across threads.
+        """
         if not text:
             return
         self._queue.append(text)

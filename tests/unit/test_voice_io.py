@@ -169,3 +169,36 @@ def test_speaker_brackets_callbacks():
 
     asyncio.run(drive())
     assert events == ["begin", "play", "end"]
+
+
+def test_speaker_stop_current_skips_play():
+    played = []
+    done = []
+    spk = SpeechSpeaker(
+        synth_fn=lambda t: b"x",
+        play_fn=lambda p: played.append(p),
+        on_done=lambda: done.append(1),
+    )
+
+    def synth_then_abort(text):
+        spk.stop_current()  # abort before play
+        return b"x"
+
+    spk._synth = synth_then_abort
+    spk.enqueue("hi")
+
+    async def drive():
+        task = asyncio.create_task(spk.run())
+        for _ in range(50):
+            if done:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(drive())
+    assert played == []  # play skipped due to abort
+    assert done == [1]  # on_done still fired
