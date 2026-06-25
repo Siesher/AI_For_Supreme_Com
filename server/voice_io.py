@@ -9,6 +9,7 @@ failure degrades to "voice off".
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -63,16 +64,13 @@ def load_voice_config(config: dict) -> VoiceConfig:
     )
 
 
-from dataclasses import dataclass as _dataclass
-
-
 class VoiceState:
     IDLE = "idle"
     LISTENING = "listening"
     SPEAKING = "speaking"
 
 
-@_dataclass
+@dataclass
 class Utterance:
     text: str
     t0: float
@@ -85,7 +83,9 @@ class VoiceIO:
     Audio adapters call into this; tests drive it directly with no hardware.
     """
 
-    def __init__(self, cfg: VoiceConfig, stop_speaking_cb=None) -> None:
+    def __init__(
+        self, cfg: VoiceConfig, stop_speaking_cb: Callable[[], None] | None = None
+    ) -> None:
         self.cfg = cfg
         self.state = VoiceState.IDLE
         self.gate_on = False

@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "server"))
 
-from voice_io import load_voice_config
+from voice_io import VoiceConfig, VoiceIO, VoiceState, load_voice_config
 
 
 def test_voice_config_defaults_when_missing():
@@ -39,11 +39,9 @@ def test_voice_config_reads_nested_block():
     assert cfg.gate_mouse_button == "x2"
 
 
-from voice_io import VoiceIO, VoiceState
 
 
 def _io(mode="toggle", **kw):
-    from voice_io import VoiceConfig
 
     return VoiceIO(VoiceConfig(gate_mode=mode, stt_min_chars=kw.get("min_chars", 2)))
 
@@ -88,7 +86,6 @@ def test_end_speaking_returns_idle_when_gate_off():
 
 def test_barge_in_stops_speaking_and_listens():
     stopped = []
-    from voice_io import VoiceConfig
 
     io = VoiceIO(
         VoiceConfig(gate_mode="toggle"), stop_speaking_cb=lambda: stopped.append(1)
