@@ -1,19 +1,20 @@
 {
   "_comment": "SupCom:FA LLM AI Bot -- Configuration File",
   "_models": {
-    "primary": "qwen3.5:4b -- best tool calling under 4B (97.5% in 2026 eval, 48 tok/s)",
-    "notes": "Lightweight: 3.4 GB fits fully in RTX 2080 VRAM, leaves ~4 GB for game. Full 201-language support incl. Russian."
+    "primary": "Qwen3.5-9B Q4_K_M (KoboldCpp deep) -- newest-gen Qwen dense, native <tool_call> + /no_think, strong Russian; ~6.5 GB leaves headroom for the game + voice STT/TTS",
+    "fast": "qwen3.5:4b -- fast tier for Ollama hot-swap; KoboldCpp serves ONE model, so the 9B fills both deep and fast roles",
+    "notes": "Qwen3.5 has no dense 14B (gap 9B->27B). GGUF: unsloth/Qwen3.5-9B-GGUF or bartowski/Qwen_Qwen3.5-9B-GGUF. Fallback if KoboldCpp build lacks qwen3_5 arch: unsloth/Qwen3-8B-GGUF (same Qwen stack)."
   },
   "llm": {
     "engine": "koboldcpp",
     "_engine_options": "koboldcpp (default) | ollama | ollama_native | lmstudio | vllm | tabbyapi. Change this one key to switch engines.",
     "engines": {
       "koboldcpp":     { "api_style": "openai", "base_url": "http://localhost:5001/v1",  "model_deep": "koboldcpp",                    "model_fast": "koboldcpp" },
-      "ollama":        { "api_style": "openai", "base_url": "http://localhost:11434/v1", "model_deep": "qwen3.5:14b",                  "model_fast": "qwen3.5:4b" },
-      "ollama_native": { "api_style": "ollama", "base_url": "http://localhost:11434",    "model_deep": "qwen3.5:14b",                  "model_fast": "qwen3.5:4b" },
-      "lmstudio":      { "api_style": "openai", "base_url": "http://localhost:1234/v1",  "model_deep": "qwen3.5-14b",                  "model_fast": "qwen3.5-4b" },
+      "ollama":        { "api_style": "openai", "base_url": "http://localhost:11434/v1", "model_deep": "qwen3.5:9b",                   "model_fast": "qwen3.5:4b" },
+      "ollama_native": { "api_style": "ollama", "base_url": "http://localhost:11434",    "model_deep": "qwen3.5:9b",                   "model_fast": "qwen3.5:4b" },
+      "lmstudio":      { "api_style": "openai", "base_url": "http://localhost:1234/v1",  "model_deep": "qwen3.5-9b",                   "model_fast": "qwen3.5-4b" },
       "vllm":          { "api_style": "openai", "base_url": "http://localhost:8000/v1",  "model_deep": "qwen3-14b-nvfp4",             "model_fast": "qwen3-14b-nvfp4" },
-      "tabbyapi":      { "api_style": "openai", "base_url": "http://localhost:5000/v1",  "model_deep": "Qwen3.5-14B-exl3",             "model_fast": "Qwen3.5-4B-exl3" }
+      "tabbyapi":      { "api_style": "openai", "base_url": "http://localhost:5000/v1",  "model_deep": "Qwen3.5-9B-exl3",              "model_fast": "Qwen3.5-4B-exl3" }
     },
     "backend": "ollama",
     "_backend_comment": "Legacy fallback when 'engine' is unset; 'hf_turbo' selects the HF+TurboQuant in-process backend.",

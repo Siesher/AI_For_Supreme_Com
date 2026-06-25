@@ -4,15 +4,24 @@
     Launch KoboldCpp for the SupCom LLM AI bot with FULL GPU offload.
 
 .DESCRIPTION
-    The bot's #1 latency killer is KoboldCpp loading most of the 14B model on the
+    The bot's #1 latency killer is KoboldCpp loading most of the model on the
     CPU (VRAM spill) -> ~0.8 tok/s -> every ReAct cycle times out into a noop.
     This script forces ALL layers onto the GPU (--usecublas --gpulayers 999) and
     routes tool calls through Qwen3's native template (--jinja --jinja_tools
     --jinjathink false) for reliable tool_calls with no 'thinking' tokens.
+    (Qwen3.5 shares Qwen3's <tool_call> template + /no_think, so these flags
+    carry over unchanged.)
 
-    Sanity target: a 14B Q4_K_M on an RTX 5070 Ti (16 GB) should occupy ~10-12 GB
-    of VRAM and run ~30-50 tok/s. If VRAM used stays near ~6 GB and throughput is
-    ~1 tok/s, layers are on the CPU -- re-run this script (it forces --gpulayers).
+    Sanity target: Qwen3.5-9B Q4_K_M on an RTX 5070 Ti (16 GB) should occupy
+    ~7-8 GB of VRAM (full offload) and run well above 40 tok/s. If VRAM used stays
+    near ~3-4 GB and throughput is ~1 tok/s, layers are on the CPU -- re-run this
+    script (it forces --gpulayers).
+
+    qwen3_5 is a new (2026) architecture: if KoboldCpp aborts with an
+    "unknown architecture" / failed-to-load error, update koboldcpp.exe to the
+    latest release (download_koboldcpp.ps1 fetches releases/latest), or fall back
+    to the plain-text Qwen3 stack: download unsloth/Qwen3-8B-GGUF and launch with
+    -Model "*Qwen3-8B*Q4_K_M*.gguf".
 
     NOTE: KoboldCpp 1.115.x enables flash attention by DEFAULT (only
     --noflashattention exists). Do NOT pass --flashattention -- argparse rejects
@@ -22,6 +31,9 @@
     legacy ANSI/OEM codepage and mangles multibyte UTF-8, so keep this file ASCII.
 
 .PARAMETER InstallDir   koboldcpp.exe + models live here. Default: C:\koboldcpp
+.PARAMETER Model        GGUF name/glob to load (-like). Default: *Qwen3.5-9B*Q4_K_M*.gguf.
+                        Falls back to the largest .gguf if nothing matches. Use
+                        -Model "*Qwen3-8B*Q4_K_M*.gguf" for the fallback model.
 .PARAMETER ContextSize  KV context length. Default: 8192 (drop to 4096 if VRAM tight)
 .PARAMETER Port         OpenAI API port. Default: 5001
 .PARAMETER Restart      Kill any running koboldcpp.exe before launching.
@@ -32,6 +44,7 @@
 [CmdletBinding()]
 param(
     [string]$InstallDir = "C:\koboldcpp",
+    [string]$Model      = "*Qwen3.5-9B*Q4_K_M*.gguf",
     [int]$ContextSize   = 8192,
     [int]$Port          = 5001,
     [switch]$Restart
@@ -44,10 +57,16 @@ $ModelDir  = Join-Path $InstallDir "models"
 if (-not (Test-Path $KoboldExe)) {
     throw "koboldcpp.exe not found at $KoboldExe. Run installer\download_koboldcpp.ps1 first."
 }
-$gguf = Get-ChildItem -Path $ModelDir -Recurse -Filter *.gguf -ErrorAction SilentlyContinue |
-    Sort-Object Length -Descending | Select-Object -First 1
-if (-not $gguf) {
+$allGguf = @(Get-ChildItem -Path $ModelDir -Recurse -Filter *.gguf -ErrorAction SilentlyContinue)
+if ($allGguf.Count -eq 0) {
     throw "No .gguf found under $ModelDir. Run installer\download_koboldcpp.ps1 first."
+}
+# Pick the GGUF matching -Model so a leftover larger model (e.g. the old Qwen3-14B)
+# is NOT loaded over the intended Qwen3.5-9B. Fall back to the largest if no match.
+$gguf = $allGguf | Where-Object { $_.Name -like $Model } | Sort-Object Length -Descending | Select-Object -First 1
+if (-not $gguf) {
+    Write-Host "==> WARNING: no .gguf matches -Model '$Model'; using the largest .gguf present."
+    $gguf = $allGguf | Sort-Object Length -Descending | Select-Object -First 1
 }
 
 if ($Restart) {

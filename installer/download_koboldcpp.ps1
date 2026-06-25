@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Download KoboldCpp + a Qwen3-14B Q4_K_M GGUF for the SupCom LLM AI bot, using aria2c.
+    Download KoboldCpp + a Qwen3.5-9B Q4_K_M GGUF for the SupCom LLM AI bot, using aria2c.
 
 .DESCRIPTION
     Native-Windows inference path (no WSL2): KoboldCpp is a single .exe built on
@@ -12,7 +12,7 @@
     bot that decides once every 20-60 s, token throughput is not the bottleneck,
     so GGUF on native Windows beats the NVFP4/vLLM/WSL2 path on simplicity.
 
-    Downloads (~9 GB GGUF + ~0.7 GB koboldcpp.exe) run through aria2c with 16
+    Downloads (~6 GB GGUF + ~0.7 GB koboldcpp.exe) run through aria2c with 16
     parallel segments and resume (-c), so an interrupted run continues where it
     left off. The GGUF filename is resolved live from the HF API, so swapping
     -ModelRepo / -ModelGlob keeps working.
@@ -22,7 +22,7 @@
     which mangles multibyte UTF-8 punctuation and breaks parsing -- so keep it ASCII.
 
 .PARAMETER InstallDir   Where koboldcpp.exe + the model live. Default: C:\koboldcpp
-.PARAMETER ModelRepo    HF GGUF repo. Default: unsloth/Qwen3-14B-GGUF (alt: bartowski/Qwen_Qwen3-14B-GGUF)
+.PARAMETER ModelRepo    HF GGUF repo. Default: unsloth/Qwen3.5-9B-GGUF (alt: bartowski/Qwen_Qwen3.5-9B-GGUF; fallback model: unsloth/Qwen3-8B-GGUF)
 .PARAMETER ModelGlob    Quant file filter (-like). Default: *Q4_K_M*.gguf
 .PARAMETER Port         KoboldCpp API port. Default: 5001
 .PARAMETER BinaryOnly   Download only koboldcpp.exe (run with VPN ON). Default: off
@@ -43,7 +43,7 @@
 [CmdletBinding()]
 param(
     [string]$InstallDir = "C:\koboldcpp",
-    [string]$ModelRepo  = "unsloth/Qwen3-14B-GGUF",
+    [string]$ModelRepo  = "unsloth/Qwen3.5-9B-GGUF",
     [string]$ModelGlob  = "*Q4_K_M*.gguf",
     [int]$Port          = 5001,
     [switch]$BinaryOnly,    # download only koboldcpp.exe (run with VPN ON)
