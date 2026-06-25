@@ -232,7 +232,7 @@ class VoiceSession:
         self.listener = listener
         self.speaker = speaker
         # Set by build_voice_session when real backends are wired; None = no hardware.
-        self._start_mic: Callable | None = None
+        self._start_mic: Callable[["VoiceSession"], None] | None = None
 
     @property
     def utterances(self) -> asyncio.Queue:
@@ -255,6 +255,10 @@ class VoiceSession:
         except Exception as exc:
             log.warning("Voice runtime stopped: %s", exc)
             speaker_task.cancel()
+            try:
+                await speaker_task
+            except asyncio.CancelledError:
+                pass
 
     async def _mic_loop(self) -> None:
         """Capture mic audio, run Silero VAD, emit speech segments to the listener.
@@ -310,7 +314,7 @@ class VoiceSession:
 
         # Audio buffer: list of raw int16 byte chunks assembled per utterance.
         _audio_buf: list[bytes] = []
-        event_loop = asyncio.get_event_loop()
+        event_loop = asyncio.get_running_loop()
 
         def _audio_callback(indata: np.ndarray, frames: int, time_info, status) -> None:
             """sounddevice InputStream callback (runs in a background thread)."""
@@ -396,7 +400,14 @@ class VoiceSession:
             log.info("Voice mic loop stopped")
 
 
-def _init_backends(cfg: VoiceConfig):
+def _init_backends(
+    cfg: VoiceConfig,
+) -> tuple[
+    Callable[[bytes], str],
+    Callable[[str], bytes],
+    Callable[[bytes], None],
+    Callable[["VoiceSession"], None],
+]:
     """Construct real STT/TTS/audio/VAD backends.  All heavy imports are local.
 
     Returns (transcribe_fn, synth_fn, play_fn, start_mic_fn).
