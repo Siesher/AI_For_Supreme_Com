@@ -8,7 +8,9 @@ failure degrades to "voice off".
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -123,3 +125,62 @@ class VoiceIO:
 
     def should_emit(self, text: str) -> bool:
         return len(text.strip()) >= self.cfg.stt_min_chars
+
+
+class SpeechSpeaker:
+    """Serializes TTS playback; drops oldest pending text past max_pending."""
+
+    def __init__(
+        self,
+        synth_fn: Callable[[str], bytes],
+        play_fn: Callable[[bytes], None],
+        max_pending: int = 2,
+        on_speaking: Callable[[], None] | None = None,
+        on_done: Callable[[], None] | None = None,
+    ) -> None:
+        self._synth = synth_fn
+        self._play = play_fn
+        self._max_pending = max_pending
+        self._on_speaking = on_speaking
+        self._on_done = on_done
+        self._queue: deque[str] = deque()
+        self._wake = asyncio.Event()
+        self._abort = False
+
+    def enqueue(self, text: str) -> None:
+        if not text:
+            return
+        self._queue.append(text)
+        while len(self._queue) > self._max_pending:
+            dropped = self._queue.popleft()
+            log.info("TTS backlog full; dropped oldest: %r", dropped)
+        self._wake.set()
+
+    def pending(self) -> int:
+        return len(self._queue)
+
+    def peek_texts(self) -> list[str]:
+        return list(self._queue)
+
+    def stop_current(self) -> None:
+        self._abort = True
+
+    async def run(self) -> None:
+        while True:
+            if not self._queue:
+                self._wake.clear()
+                await self._wake.wait()
+                continue
+            text = self._queue.popleft()
+            self._abort = False
+            if self._on_speaking:
+                self._on_speaking()
+            try:
+                pcm = await asyncio.to_thread(self._synth, text)
+                if not self._abort:
+                    await asyncio.to_thread(self._play, pcm)
+            except Exception as exc:  # never let TTS crash the loop
+                log.warning("TTS synth/play failed: %s", exc)
+            finally:
+                if self._on_done:
+                    self._on_done()

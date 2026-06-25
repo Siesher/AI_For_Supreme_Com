@@ -1,10 +1,17 @@
 # Unit tests: voice_io
+import asyncio
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "server"))
 
-from voice_io import VoiceConfig, VoiceIO, VoiceState, load_voice_config
+from voice_io import (
+    SpeechSpeaker,
+    VoiceConfig,
+    VoiceIO,
+    VoiceState,
+    load_voice_config,
+)
 
 
 def test_voice_config_defaults_when_missing():
@@ -37,8 +44,6 @@ def test_voice_config_reads_nested_block():
     assert cfg.vad_silence_timeout_ms == 600
     assert cfg.gate_mode == "push"
     assert cfg.gate_mouse_button == "x2"
-
-
 
 
 def _io(mode="toggle", **kw):
@@ -102,3 +107,65 @@ def test_should_emit_filters_short_text():
     assert io.should_emit("ок") is True
     assert io.should_emit(" a ") is False
     assert io.should_emit("") is False
+
+
+def test_speaker_drops_oldest_over_max_pending():
+    spk = SpeechSpeaker(synth_fn=lambda t: b"", play_fn=lambda p: None, max_pending=2)
+    spk.enqueue("one")
+    spk.enqueue("two")
+    spk.enqueue("three")  # backlog exceeds 2 -> "one" dropped
+    assert spk.pending() == 2
+    assert spk.peek_texts() == ["two", "three"]
+
+
+def test_speaker_run_synthesizes_and_plays_in_order():
+    played = []
+    spk = SpeechSpeaker(
+        synth_fn=lambda t: t.encode("utf-8"),
+        play_fn=lambda pcm: played.append(pcm.decode("utf-8")),
+        max_pending=5,
+    )
+    spk.enqueue("alpha")
+    spk.enqueue("beta")
+
+    async def drive():
+        task = asyncio.create_task(spk.run())
+        # let the worker drain both items
+        for _ in range(50):
+            if len(played) >= 2:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(drive())
+    assert played == ["alpha", "beta"]
+
+
+def test_speaker_brackets_callbacks():
+    events = []
+    spk = SpeechSpeaker(
+        synth_fn=lambda t: b"x",
+        play_fn=lambda pcm: events.append("play"),
+        on_speaking=lambda: events.append("begin"),
+        on_done=lambda: events.append("end"),
+    )
+    spk.enqueue("hi")
+
+    async def drive():
+        task = asyncio.create_task(spk.run())
+        for _ in range(50):
+            if "end" in events:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(drive())
+    assert events == ["begin", "play", "end"]
