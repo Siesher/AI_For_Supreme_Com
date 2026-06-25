@@ -222,6 +222,61 @@ class SpeechListener:
         return True
 
 
+class VoiceSession:
+    """Facade the bridge talks to: utterances in, speak() out."""
+
+    def __init__(
+        self, io: VoiceIO, listener: SpeechListener, speaker: SpeechSpeaker
+    ) -> None:
+        self.io = io
+        self.listener = listener
+        self.speaker = speaker
+
+    @property
+    def utterances(self) -> asyncio.Queue:
+        return self.listener.utterances
+
+    def speak(self, text: str) -> None:
+        self.speaker.enqueue(text)
+
+    async def run(self) -> None:
+        # Phase 1: the speaker worker; the real mic loop is added by _init_backends.
+        await self.speaker.run()
+
+
+def _init_backends(cfg: VoiceConfig):
+    """Construct real STT/TTS/audio backends. Raises on any failure.
+
+    Returns a tuple (transcribe_fn, synth_fn, play_fn, start_mic_fn). Implemented
+    fully in Task 8 (real backends); Task 6 only needs this symbol to exist so the
+    factory's failure path is testable.
+    """
+    raise RuntimeError("real backends not wired yet (Task 8)")
+
+
+def build_voice_session(cfg: VoiceConfig) -> VoiceSession | None:
+    """Build a VoiceSession or return None (voice-off) on any failure."""
+    if not cfg.enabled:
+        log.info("Voice disabled in config (voice.enabled=false)")
+        return None
+    try:
+        transcribe_fn, synth_fn, play_fn, _start_mic = _init_backends(cfg)
+    except Exception as exc:
+        log.warning("Voice backends unavailable, running without voice: %s", exc)
+        return None
+    io = VoiceIO(cfg)
+    speaker = SpeechSpeaker(
+        synth_fn,
+        play_fn,
+        max_pending=cfg.tts_max_pending,
+        on_speaking=io.begin_speaking,
+        on_done=io.end_speaking,
+    )
+    io._stop_speaking_cb = speaker.stop_current
+    listener = SpeechListener(io, transcribe_fn)
+    return VoiceSession(io, listener, speaker)
+
+
 def build_voice_snapshot(latest_snapshot: dict | None, text: str) -> dict:
     """Build a synthetic snapshot carrying a spoken utterance as player_chat.
 

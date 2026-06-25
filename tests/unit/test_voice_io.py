@@ -11,7 +11,9 @@ from voice_io import (
     Utterance,
     VoiceConfig,
     VoiceIO,
+    VoiceSession,
     VoiceState,
+    build_voice_session,
     build_voice_snapshot,
     load_voice_config,
 )
@@ -261,3 +263,29 @@ def test_build_voice_snapshot_handles_no_latest():
     assert snap["player_chat"] == ["привет"]
     assert snap["trigger_event"] == "player_chat"
     assert "tick" in snap
+
+
+def test_session_speak_enqueues_and_exposes_utterances():
+    io = VoiceIO(VoiceConfig())
+    spk = SpeechSpeaker(synth_fn=lambda t: b"", play_fn=lambda p: None)
+    lis = SpeechListener(io, transcribe_fn=lambda pcm: "x")
+    sess = VoiceSession(io, lis, spk)
+    sess.speak("привет")
+    assert spk.pending() == 1
+    assert sess.utterances is lis.utterances
+
+
+def test_build_voice_session_disabled_returns_none():
+    assert build_voice_session(VoiceConfig(enabled=False)) is None
+
+
+def test_build_voice_session_missing_backend_returns_none(monkeypatch):
+    # Simulate a backend import failure inside the factory.
+    import voice_io
+
+    monkeypatch.setattr(
+        voice_io,
+        "_init_backends",
+        lambda cfg: (_ for _ in ()).throw(RuntimeError("no mic")),
+    )
+    assert build_voice_session(VoiceConfig(enabled=True)) is None
