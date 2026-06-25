@@ -12,6 +12,7 @@ from voice_io import (
     VoiceConfig,
     VoiceIO,
     VoiceState,
+    build_voice_snapshot,
     load_voice_config,
 )
 
@@ -236,3 +237,27 @@ def test_listener_drops_short_text():
     emitted = asyncio.run(lis.on_segment(b"pcm", 0.0, 1.0))
     assert emitted is False
     assert lis.utterances.empty()
+
+
+def test_build_voice_snapshot_clones_and_stamps():
+    latest = {
+        "tick": 500,
+        "economy": {"mass_income": 7},
+        "player_chat": [],
+        "trigger_event": "periodic",
+    }
+    snap = build_voice_snapshot(latest, "защити базу")
+    assert snap["player_chat"] == ["защити базу"]
+    assert snap["trigger_event"] == "player_chat"
+    assert snap["tick"] == 500
+    assert snap["economy"] == {"mass_income": 7}
+    # original not mutated
+    assert latest["player_chat"] == []
+    assert latest["trigger_event"] == "periodic"
+
+
+def test_build_voice_snapshot_handles_no_latest():
+    snap = build_voice_snapshot(None, "привет")
+    assert snap["player_chat"] == ["привет"]
+    assert snap["trigger_event"] == "player_chat"
+    assert "tick" in snap

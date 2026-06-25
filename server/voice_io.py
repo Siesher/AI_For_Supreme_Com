@@ -9,6 +9,7 @@ failure degrades to "voice off".
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from collections import deque
 from collections.abc import Callable
@@ -219,3 +220,18 @@ class SpeechListener:
             log.warning("Utterance queue full; dropping: %r", text)
             return False
         return True
+
+
+def build_voice_snapshot(latest_snapshot: dict | None, text: str) -> dict:
+    """Build a synthetic snapshot carrying a spoken utterance as player_chat.
+
+    Clones the latest real snapshot (for economy/units/threats context) and
+    stamps player_chat + trigger_event so the decision loop runs immediately.
+    """
+    if latest_snapshot:
+        snap = copy.deepcopy(latest_snapshot)
+    else:
+        snap = {"tick": 0, "game_time_s": 0, "phase": "early", "mode": "ally"}
+    snap["player_chat"] = [text]
+    snap["trigger_event"] = "player_chat"
+    return snap
