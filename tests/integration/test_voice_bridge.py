@@ -50,7 +50,7 @@ def test_voice_loop_enqueues_synthetic_snapshot():
     assert env["data"]["tick"] == 42  # cloned from latest
 
 
-def test_decision_loop_speaks_chat(monkeypatch):
+def test_decision_loop_speaks_chat():
     spoken = []
 
     class FakeVoice:
@@ -67,3 +67,14 @@ def test_decision_loop_speaks_chat(monkeypatch):
         voice=FakeVoice(),
     )
     assert spoken == ["иду на север"]
+
+
+def test_speak_chat_messages_voice_none_still_appends_history():
+    history = []
+    bridge_server._speak_chat_messages(
+        decision={"tool_calls": [{"name": "chat", "args": {"message": "ок"}}]},
+        iterations=[],
+        chat_history=history,
+        voice=None,
+    )
+    assert history == [{"role": "bot", "text": "ок"}]

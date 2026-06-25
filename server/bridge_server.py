@@ -17,6 +17,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from voice_io import VoiceSession  # noqa: F401
 
 # Will be implemented in later tasks; imported defensively here so the
 # server starts and logs even if modules are stubs.
@@ -387,8 +391,10 @@ async def main(config_path: str) -> None:
         ),
     ]
     if voice:
-        coros.append(voice.run())
-        coros.append(_voice_loop(voice, shared_state, snapshot_queue))
+        coros.append(_guard_voice(voice.run(), "Voice runtime"))
+        coros.append(
+            _guard_voice(_voice_loop(voice, shared_state, snapshot_queue), "Voice loop")
+        )
     await asyncio.gather(*coros)
 
 
@@ -422,7 +428,19 @@ async def _file_ipc_poll(
         await asyncio.sleep(1)
 
 
-async def _voice_loop(voice, shared: dict, snapshot_queue: asyncio.Queue) -> None:
+async def _guard_voice(coro, label: str) -> None:
+    """Run a voice coroutine so its failure disables voice, never the bridge."""
+    try:
+        await coro
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("%s crashed; voice disabled for this session", label)
+
+
+async def _voice_loop(
+    voice: "VoiceSession", shared: dict, snapshot_queue: asyncio.Queue
+) -> None:
     """Turn spoken utterances into synthetic priority snapshots.
 
     Waits on *voice.utterances*, clones the latest real snapshot from *shared*,
@@ -443,7 +461,10 @@ async def _voice_loop(voice, shared: dict, snapshot_queue: asyncio.Queue) -> Non
 
 
 def _speak_chat_messages(
-    decision: dict, iterations: list, chat_history: list, voice
+    decision: dict,
+    iterations: list,
+    chat_history: list,
+    voice: "VoiceSession | None",
 ) -> None:
     """Append bot chat messages to history and, if voice is on, speak them.
 
@@ -481,7 +502,7 @@ async def _decision_loop(
     decision_memory,
     file_ipc=None,
     file_react_loop=None,
-    voice=None,
+    voice: "VoiceSession | None" = None,
 ) -> None:
     """
     Main decision loop: consume snapshots, run ReAct cycle, emit commands.
