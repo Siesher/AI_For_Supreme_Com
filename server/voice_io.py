@@ -61,3 +61,65 @@ def load_voice_config(config: dict) -> VoiceConfig:
         output_device=v.get("output_device"),
         debug_dump_audio=bool(v.get("debug_dump_audio", False)),
     )
+
+
+from dataclasses import dataclass as _dataclass
+
+
+class VoiceState:
+    IDLE = "idle"
+    LISTENING = "listening"
+    SPEAKING = "speaking"
+
+
+@_dataclass
+class Utterance:
+    text: str
+    t0: float
+    t1: float
+
+
+class VoiceIO:
+    """Pure state machine for gate + echo-guard + barge-in.
+
+    Audio adapters call into this; tests drive it directly with no hardware.
+    """
+
+    def __init__(self, cfg: VoiceConfig, stop_speaking_cb=None) -> None:
+        self.cfg = cfg
+        self.state = VoiceState.IDLE
+        self.gate_on = False
+        self._stop_speaking_cb = stop_speaking_cb
+
+    def on_button_press(self) -> None:
+        if self.state == VoiceState.SPEAKING:
+            # Barge-in: abort TTS, start listening.
+            if self._stop_speaking_cb:
+                self._stop_speaking_cb()
+            self.gate_on = True
+            self.state = VoiceState.LISTENING
+            return
+        if self.cfg.gate_mode == "toggle":
+            self.gate_on = not self.gate_on
+        else:  # push
+            self.gate_on = True
+        self.state = VoiceState.LISTENING if self.gate_on else VoiceState.IDLE
+
+    def on_button_release(self) -> None:
+        if self.cfg.gate_mode != "push":
+            return  # toggle ignores release
+        self.gate_on = False
+        if self.state == VoiceState.LISTENING:
+            self.state = VoiceState.IDLE
+
+    def begin_speaking(self) -> None:
+        self.state = VoiceState.SPEAKING
+
+    def end_speaking(self) -> None:
+        self.state = VoiceState.LISTENING if self.gate_on else VoiceState.IDLE
+
+    def accepting_speech(self) -> bool:
+        return self.state == VoiceState.LISTENING
+
+    def should_emit(self, text: str) -> bool:
+        return len(text.strip()) >= self.cfg.stt_min_chars

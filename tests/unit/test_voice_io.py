@@ -37,3 +37,71 @@ def test_voice_config_reads_nested_block():
     assert cfg.vad_silence_timeout_ms == 600
     assert cfg.gate_mode == "push"
     assert cfg.gate_mouse_button == "x2"
+
+
+from voice_io import VoiceIO, VoiceState
+
+
+def _io(mode="toggle", **kw):
+    from voice_io import VoiceConfig
+
+    return VoiceIO(VoiceConfig(gate_mode=mode, stt_min_chars=kw.get("min_chars", 2)))
+
+
+def test_toggle_gate_cycles_listening():
+    io = _io("toggle")
+    assert io.state == VoiceState.IDLE
+    io.on_button_press()  # toggle ON
+    assert io.state == VoiceState.LISTENING
+    assert io.accepting_speech() is True
+    io.on_button_release()  # release ignored in toggle
+    assert io.state == VoiceState.LISTENING
+    io.on_button_press()  # toggle OFF
+    assert io.state == VoiceState.IDLE
+    assert io.accepting_speech() is False
+
+
+def test_push_gate_holds():
+    io = _io("push")
+    io.on_button_press()
+    assert io.state == VoiceState.LISTENING
+    io.on_button_release()
+    assert io.state == VoiceState.IDLE
+
+
+def test_speaking_suppresses_listening():
+    io = _io("toggle")
+    io.on_button_press()  # LISTENING
+    io.begin_speaking()
+    assert io.state == VoiceState.SPEAKING
+    assert io.accepting_speech() is False  # echo-guard
+    io.end_speaking()
+    assert io.state == VoiceState.LISTENING  # gate still on -> back to listening
+
+
+def test_end_speaking_returns_idle_when_gate_off():
+    io = _io("toggle")
+    io.begin_speaking()  # gate never turned on
+    io.end_speaking()
+    assert io.state == VoiceState.IDLE
+
+
+def test_barge_in_stops_speaking_and_listens():
+    stopped = []
+    from voice_io import VoiceConfig
+
+    io = VoiceIO(
+        VoiceConfig(gate_mode="toggle"), stop_speaking_cb=lambda: stopped.append(1)
+    )
+    io.begin_speaking()
+    io.on_button_press()  # barge-in
+    assert stopped == [1]
+    assert io.state == VoiceState.LISTENING
+    assert io.gate_on is True
+
+
+def test_should_emit_filters_short_text():
+    io = _io("toggle", min_chars=2)
+    assert io.should_emit("ок") is True
+    assert io.should_emit(" a ") is False
+    assert io.should_emit("") is False
