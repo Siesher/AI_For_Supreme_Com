@@ -1,46 +1,57 @@
 # T018: LLM Client — server/llm_client.py
 #
-# Sends prompts to Ollama's /api/generate endpoint.
-# On timeout (10s), auto-retries once with the fast model.
-# Returns a parsed StrategicDecision dict, or None on unrecoverable error.
+# Sends messages + tools to Ollama's /api/chat endpoint.
+# On timeout, auto-retries once with the fast model.
+# Returns a list of tool_calls dicts, or None on error.
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 import time
 from typing import Any, Optional
 
 import httpx
 
-# Strip Qwen3.5 thinking blocks: <think>...</think> or Thinking...\n...done thinking.\n
-_THINK_BLOCK_RE = re.compile(
-    r"<think>.*?</think>|Thinking\s*\.{3}.*?done thinking\.\s*",
-    re.DOTALL,
-)
+from tools import GAME_TOOLS
+from xml_tool_parser import _parse_xml_tool_calls as _parse_xml_tool_calls  # noqa: F401 re-export for tests
+from xml_tool_parser import parse_fallback_tool_calls
 
 log = logging.getLogger(__name__)
 
-_OLLAMA_GENERATE_PATH = "/api/generate"
-_CONSECUTIVE_TIMEOUT_LIMIT = 3   # after this many 8B timeouts, route all to 4B
+_OLLAMA_CHAT_PATH = "/api/chat"
+_CONSECUTIVE_TIMEOUT_LIMIT = 3
 
 
 class LLMClient:
-    """Async Ollama client. Call query(prompt, model_tag) to get a decision."""
+    """Async Ollama client with tool-calling support."""
 
     def __init__(self, config: dict) -> None:
-        llm_cfg             = config.get("llm", {})
-        bridge_cfg          = config.get("bridge", {})
-        self._base_url      = llm_cfg.get("base_url", "http://localhost:11434")
-        self._model_deep    = llm_cfg.get("model_deep", "qwen3.5:9b")
-        self._model_fast    = llm_cfg.get("model_fast", "qwen3.5:4b")
-        self._temperature   = llm_cfg.get("temperature", 0.3)
-        self._max_tokens    = llm_cfg.get("max_tokens", 256)
-        self._timeout_s     = bridge_cfg.get("timeout_s", 10)
+        llm_cfg = config.get("llm", {})
+        bridge_cfg = config.get("bridge", {})
+        self._base_url = llm_cfg.get("base_url", "http://localhost:11434")
+        self._model_deep = llm_cfg.get("model_deep", "qwen3.5:9b")
+        self._model_fast = llm_cfg.get("model_fast", "qwen3.5:9b")
+        self._temperature = llm_cfg.get("temperature", 0.3)
+        self._max_tokens = llm_cfg.get("max_tokens", 128)
+        self._timeout_s = bridge_cfg.get("timeout_s", 30)
+
+        # Ollama inference tuning
+        self._num_ctx = llm_cfg.get("num_ctx", 4096)
+        self._num_batch = llm_cfg.get("num_batch", 512)
+        self._keep_alive = llm_cfg.get("keep_alive", "30m")
+        # MoE-specific: num_gpu controls how many layers on GPU,
+        # num_thread limits CPU parallelism so the game still gets cores.
+        self._num_gpu = llm_cfg.get("num_gpu")  # None = Ollama auto
+        self._num_thread = llm_cfg.get("num_thread")  # None = Ollama auto
 
         self._consecutive_deep_timeouts = 0
-        self._deep_degraded = False   # True if 8B is too slow; route all to 4B
+        self._deep_degraded = False
+
+        # Persistent HTTP client — reuses TCP connection across queries
+        self._http_client = httpx.AsyncClient(
+            timeout=self._timeout_s,
+            limits=httpx.Limits(max_connections=2, max_keepalive_connections=2),
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -48,43 +59,44 @@ class LLMClient:
 
     async def query(
         self,
-        prompt: str,
+        messages: list[dict[str, str]],
         model_tag: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         """
-        POST to Ollama /api/generate. Returns parsed StrategicDecision or None.
-        If model_tag is None, defaults to model_deep.
-        On timeout, retries once with model_fast.
+        POST to Ollama /api/chat with tool definitions.
+        Returns {"tool_calls": [...], "_model_used": ..., "_latency_ms": ...}
+        or None on unrecoverable error.
         """
         if model_tag is None:
             model_tag = self._model_deep
 
-        # Degrade deep model if it keeps timing out (T053)
         if self._deep_degraded and model_tag == self._model_deep:
-            log.warning("Deep model degraded — falling back to fast model for this query.")
+            log.warning("Deep model degraded — using fast model.")
             model_tag = self._model_fast
 
-        result = await self._query_model(prompt, model_tag)
+        result = await self._query_model(messages, model_tag)
 
         if result is None and model_tag == self._model_deep:
-            # Primary timeout — retry once with fast model
             self._consecutive_deep_timeouts += 1
             log.warning(
-                "Deep model timed out (consecutive: %d). Retrying with fast model.",
+                "Deep model timed out (consecutive: %d). Retrying with fast.",
                 self._consecutive_deep_timeouts,
             )
             if self._consecutive_deep_timeouts >= _CONSECUTIVE_TIMEOUT_LIMIT:
                 self._deep_degraded = True
                 log.error(
-                    "Deep model timed out %d times in a row. "
-                    "Routing all traffic to fast model for this session.",
+                    "Deep model degraded after %d timeouts.",
                     self._consecutive_deep_timeouts,
                 )
-            result = await self._query_model(prompt, self._model_fast)
+            result = await self._query_model(messages, self._model_fast)
         elif result is not None and model_tag == self._model_deep:
             self._consecutive_deep_timeouts = 0
 
         return result
+
+    async def close(self) -> None:
+        """Close the persistent HTTP client."""
+        await self._http_client.aclose()
 
     # ------------------------------------------------------------------
     # Internal
@@ -92,56 +104,94 @@ class LLMClient:
 
     async def _query_model(
         self,
-        prompt: str,
+        messages: list[dict[str, str]],
         model_tag: str,
     ) -> Optional[dict[str, Any]]:
-        url     = self._base_url.rstrip("/") + _OLLAMA_GENERATE_PATH
+        url = self._base_url.rstrip("/") + _OLLAMA_CHAT_PATH
+        options = {
+            "temperature": self._temperature,
+            "num_predict": self._max_tokens,
+            "num_ctx": self._num_ctx,
+            "num_batch": self._num_batch,
+        }
+        if self._num_gpu is not None:
+            options["num_gpu"] = self._num_gpu
+        if self._num_thread is not None:
+            options["num_thread"] = self._num_thread
+
         payload = {
-            "model":  model_tag,
-            "prompt": prompt,
-            "format": "json",
+            "model": model_tag,
+            "messages": messages,
+            "tools": GAME_TOOLS,
             "stream": False,
-            "think":  False,          # Qwen3.5: disable thinking at API level
-            "options": {
-                "temperature": self._temperature,
-                "num_predict": self._max_tokens,
-                "stop":        ["}"],
-            },
+            "think": False,
+            "keep_alive": self._keep_alive,
+            "options": options,
         }
 
         t_start = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=self._timeout_s) as client:
-                resp = await client.post(url, json=payload)
-                resp.raise_for_status()
+            resp = await self._http_client.post(url, json=payload)
+            resp.raise_for_status()
 
             latency_ms = int((time.monotonic() - t_start) * 1000)
             data = resp.json()
-            raw_text = data.get("response", "")
+            msg = data.get("message", {})
 
-            # Strip any thinking blocks leaked despite think=false
-            raw_text = _THINK_BLOCK_RE.sub("", raw_text).strip()
+            tool_calls_raw = msg.get("tool_calls", [])
+            content = msg.get("content", "")
 
-            # Ensure JSON is properly terminated (Ollama stop token issue)
-            if not raw_text.endswith("}"):
-                raw_text += "}"
+            # Parse tool calls into clean format
+            tool_calls = []
+            for tc in tool_calls_raw:
+                fn = tc.get("function", {})
+                name = fn.get("name")
+                args = fn.get("arguments", {})
+                if name:
+                    tool_calls.append({"name": name, "args": args})
 
-            decision = json.loads(raw_text)
-            decision["_model_used"]   = model_tag
-            decision["_latency_ms"]   = latency_ms
-            log.debug("LLM ok: model=%s latency=%dms strategy=%s",
-                      model_tag, latency_ms, decision.get("strategy"))
-            return decision
+            # If model responded with text instead of tool_calls JSON, recover the
+            # call from free text (name(...), name\n{json}, bare/flat JSON, fences,
+            # <tool_call>/<function=...> leaks) before falling back to noop.
+            if not tool_calls and content:
+                recovered = parse_fallback_tool_calls(content)
+                if recovered:
+                    tool_calls = recovered
+                    log.warning(
+                        "Recovered %d tool call(s) from free text: %s",
+                        len(recovered),
+                        [tc["name"] for tc in recovered],
+                    )
+                else:
+                    log.info("LLM returned plain text (no tools): %s", content[:200])
+                    tool_calls.append(
+                        {"name": "noop", "args": {"reasoning": content[:200]}}
+                    )
+
+            result = {
+                "tool_calls": tool_calls,
+                "_model_used": model_tag,
+                "_latency_ms": latency_ms,
+            }
+
+            log.info(
+                "LLM ok: model=%s latency=%dms tools=%s",
+                model_tag,
+                latency_ms,
+                [tc["name"] for tc in tool_calls],
+            )
+            return result
 
         except httpx.TimeoutException:
             log.warning("LLM timeout: model=%s timeout=%ss", model_tag, self._timeout_s)
             return None
         except httpx.HTTPStatusError as exc:
-            log.error("LLM HTTP error: model=%s status=%s", model_tag, exc.response.status_code)
+            log.error(
+                "LLM HTTP error: model=%s status=%s",
+                model_tag,
+                exc.response.status_code,
+            )
             return None
-        except json.JSONDecodeError as exc:
-            log.error("LLM JSON decode error: model=%s err=%s", model_tag, exc)
-            return None
-        except Exception as exc:
+        except Exception:
             log.exception("LLM unexpected error: model=%s", model_tag)
             return None

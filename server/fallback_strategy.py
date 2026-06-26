@@ -26,17 +26,20 @@ class FallbackStrategy:
           5. default                → balanced
         """
         economy = snapshot.get("economy", {})
-        units   = snapshot.get("units",   {})
+        units = snapshot.get("units", {})
         threats = snapshot.get("threats", {})
-        mode    = snapshot.get("mode", "opponent")
+        mode = snapshot.get("mode", "opponent")
 
-        mass_income   = economy.get("mass_income",   0)
-        factories     = units.get("factories",       0)
-        land_military = units.get("land_military",   0)
-        near_base_thr = threats.get("near_base",     0)
+        mass_income = economy.get("mass_income", 0)
+        factories = units.get("factories", 0)
+        land_military = units.get("land_military", 0)
+        near_base_thr = threats.get("near_base", 0)
 
-        # Priority 1: base under heavy attack
-        if near_base_thr > 50:
+        # Priority 1: base under heavy attack.
+        # near_base is now a count of enemy mobile units at the base (B1), not the
+        # old self-contaminated ~1000 "Overall" threat scalar, so the trigger is a
+        # handful of enemy units actually at the doorstep.
+        if near_base_thr >= 8:
             return self._make(
                 strategy="defend",
                 build_priority=["t2_pd", "shield"],
@@ -107,11 +110,11 @@ class FallbackStrategy:
     ) -> dict[str, Any]:
         log.info("Fallback strategy: %s (%s)", strategy, reason)
         return {
-            "strategy":          strategy,
-            "build_priority":    build_priority,
-            "army_composition":  comp,
-            "attack_direction":  direction,
+            "strategy": strategy,
+            "build_priority": build_priority,
+            "army_composition": comp,
+            "attack_direction": direction,
             "retreat_threshold": retreat,
-            "chat_message":      chat,
-            "reasoning":         reason,
+            "chat_message": chat,
+            "reasoning": reason,
         }

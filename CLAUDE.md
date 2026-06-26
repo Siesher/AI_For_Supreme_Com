@@ -1,7 +1,7 @@
-# SupCom LLM AI Bot — Development Guide
+﻿# SupCom LLM AI Bot — Development Guide
 
 **Branch**: `001-supcom-llm-ai-bot`
-**Last updated**: 2026-02-18
+**Last updated**: 2026-03-29
 
 ---
 
@@ -19,6 +19,31 @@ Three-layer response system for the ally-mode bot:
 
 ---
 
+## ReAct Agent Loop (002-agent-react-loop)
+
+The LLM agent uses a multi-step ReAct (Reason + Act) loop per decision cycle:
+
+1. **Observe** — LLM calls observation tools (get_enemy_army, get_threat_at, etc.)
+2. **Decide** — LLM analyzes results, calls action tools (attack, defend, etc.)
+3. **Feedback** — Action results returned to LLM for follow-up decisions
+4. **Memory** — Completed cycles stored in rolling buffer, included in future prompts
+
+**Key files**: `server/react_loop.py` (orchestrator), `server/decision_memory.py` (session memory), `mod/lua/AI/ObservationHandlers.lua` (Lua-side queries)
+
+**Config** (`installer/config.json` → `bot`):
+- `react_max_iterations`: 3 (max LLM queries per cycle)
+- `react_cycle_timeout_s`: 30 (total cycle budget)
+- `decision_memory_size`: 10 (rolling buffer entries)
+
+**Pipe message types**:
+- `observation_request` / `observation_result` — read-only game queries
+- `action_execute` / `action_result` — action execution with feedback
+- `command` — legacy batch command (still sent for backward compat)
+
+**Observation tools**: `get_enemy_army`, `get_threat_at`, `get_mass_points`, `get_my_factories`, `get_map_control`
+
+---
+
 ## LLM Models
 
 | Tag | Size | VRAM | Use |
@@ -27,6 +52,82 @@ Three-layer response system for the ally-mode bot:
 | `qwen3.5:4b` | Q4_K_M | ~2.5 GB | Fast/routine/ally |
 
 **Critical**: Every system prompt MUST begin with `/no_think` to disable Qwen3.5 chain-of-thought tokens.
+
+### Inference Engine Selection (`llm.engine` in config.json)
+
+Switch engines by changing **one key** — `llm.engine` — to a preset in `llm.engines`:
+
+| `engine` | api_style | base_url | Quant | When to use |
+|----------|-----------|----------|-------|-------------|
+| `koboldcpp` (default) | openai | `:5001/v1` | GGUF Q4 | Native Windows, single .exe, best VRAM control + GBNF tool-grammar |
+| `ollama` | openai | `:11434/v1` | GGUF Q4 | Incumbent, zero-install; Ollama's OpenAI endpoint |
+| `ollama_native` | ollama | `:11434` | GGUF Q4 | Ollama via `/api/chat` (keeps tuned options + `keep_alive`, `kv_cache_type`) |
+| `lmstudio` | openai | `:1234/v1` | GGUF Q4 | GUI one-click; `lms server start` |
+| `vllm` | openai | `:8000/v1` | NVFP4/FP8 | Max throughput (WSL2 on Blackwell); experimental |
+| `tabbyapi` | openai | `:5000/v1` | exl3 | ExLlamaV3; fast single-stream |
+
+All `openai` engines go through `server/openai_client.py` (`/v1/chat/completions` with `tools`).
+`ollama_native` uses `server/llm_client.py`. `hf_turbo` (set legacy `llm.backend`) uses `server/hf_llm_client.py`.
+Engine speed is NOT the bottleneck for this bot **as long as all layers are on the GPU** (full-offload 14B
+Q4 runs ~35-44 tok/s = ~0.6 s/decision). The default favors native-Windows reliability + game co-residency
+over raw FP4 throughput. CPU-spilled layers (see below) collapse this to ~0.8 tok/s and break every cycle.
+
+**KoboldCpp quick start:** `powershell -File installer/serve_koboldcpp.ps1 -Restart`
+(forces full GPU offload + waits for `:5001/v1`; equivalently
+`koboldcpp.exe --model Qwen3-14B-Q4_K_M.gguf --usecublas --gpulayers 999 --contextsize 4096 --jinja --jinja_tools --jinjathink false --skiplauncher --port 5001`)
+- `--gpulayers 999` (all layers on GPU) is the **#1 latency control**. Symptom of CPU spill: VRAM used ~6 GB
+  not ~13 GB, ~0.8 tok/s, every ReAct cycle times out into a `noop`. On a 16 GB RTX 5070 Ti a 14B Q4 + 4096
+  ctx occupies ~13 GB. Verify with `nvidia-smi --query-gpu=memory.used --format=csv`.
+- **Do NOT pass `--flashattention`** — KoboldCpp 1.115.x has flash attention **default-on** (only
+  `--noflashattention` exists); the unknown flag makes argparse abort the launch.
+- `--usecublas`, not `--usecuda`. `--contextsize` should match `llm.num_ctx` in config.json (4096) — larger
+  just wastes VRAM the prompt builder never uses, squeezing the co-resident game.
+- `--jinja_tools` routes tool calls through Qwen3's native `<tool_call>` template (needs `--jinja`); without
+  it KoboldCpp's AutoGuess adapter emits plain text that only the XML/text fallback catches. `--jinjathink
+  false` disables Qwen3 thinking.
+
+### Voice mode (Phase 1)
+
+Requires `voice.enabled = true` in `installer/config.json` and the optional deps below.
+Ship default is `false` — existing setups are unaffected.
+
+**1. Install deps**
+```powershell
+.\.venv\Scripts\python.exe -m pip install faster-whisper sounddevice piper-tts onnxruntime pynput numpy
+```
+
+**2. Download the Piper voice model** (ru_RU-irina-medium):
+```powershell
+# Download .onnx + .json from https://github.com/rhasspy/piper/releases
+# Place in e.g. C:\models\piper\ru_RU-irina-medium.onnx
+# Then set "tts": { "voice": "C:\\models\\piper\\ru_RU-irina-medium.onnx" }
+```
+
+**3. Flip the switch** in `installer/config.json`:
+```json
+"voice": { "enabled": true, ... }
+```
+
+**4. Pick your mouse button**: default `"x1"` (M4, side-back button).
+Change to `"x2"` for M5 (side-forward). Mode `"toggle"` = press once on, press again off;
+`"push"` = hold to speak. Set in `"gate": { "mode": "toggle", "mouse_button": "x1" }`.
+
+**5. Self-test** (mic + STT + TTS, no game needed):
+```powershell
+.\.venv\Scripts\python.exe server/voice_io.py --selftest
+```
+Expected: logs "Voice mic loop active", you press the side button, say a phrase in Russian,
+it prints the transcript and speaks it back via TTS. Silero VAD model (~1 MB) downloads
+automatically to `~/.cache/silero-vad/silero_vad.onnx` on first run.
+
+---
+
+**TurboQuant** (arXiv:2504.19874): online vector quantization for KV cache.
+Keys use Q_prod (MSE + QJL residual), values use Q_mse (rotation + Lloyd-Max codebook).
+Config: `turbo_quant.key_bits`, `turbo_quant.value_bits` in config.json.
+
+**HF backend requires**: `torch`, `transformers`, `bitsandbytes`, `scipy`, `accelerate`.
+Install: `pip install torch transformers bitsandbytes scipy accelerate`
 
 ---
 
@@ -93,7 +194,10 @@ AI_For_Supreme_Com/
 │   ├── llm_router.py           Model selection (T035/T036)
 │   ├── config.py               Config loader/validator (T041)
 │   ├── decision_logger.py      JSONL decision log (T048)
-│   └── save_state.py           Save/load bot state (T049)
+│   ├── save_state.py           Save/load bot state (T049)
+│   ├── hf_llm_client.py        HF Transformers + TurboQuant backend
+│   ├── turbo_quant.py          TurboQuant engine (arXiv:2504.19874)
+│   └── turbo_quant_cache.py    TurboQuantCache (HF Cache API)
 ├── installer/
 │   ├── config.json             Default configuration
 │   ├── install.ps1             Guided installer (T042/T043)

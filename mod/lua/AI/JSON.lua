@@ -21,15 +21,16 @@ local function encode_value(val)
         return val and "true" or "false"
 
     elseif t == "number" then
-        -- Guard against NaN / infinity
-        if val ~= val or val == math.huge or val == -math.huge then
-            return "null"
+        -- NaN check: NaN is not equal to itself
+        if val ~= val then return "0" end
+        -- Just use tostring — SupCom Lua 5.0 handles it. Avoid math.floor
+        -- which may behave unexpectedly with certain engine-returned numbers.
+        local s = tostring(val)
+        -- tostring may return "inf"/"-inf"/"nan" strings which aren't valid JSON
+        if s == "inf" or s == "-inf" or s == "nan" or s == "1.#INF" or s == "-1.#INF" then
+            return "0"
         end
-        -- Emit integers without decimal point
-        if math.floor(val) == val and val >= -2147483648 and val <= 2147483647 then
-            return tostring(math.floor(val))
-        end
-        return tostring(val)
+        return s
 
     elseif t == "string" then
         return encode_string(val)
@@ -43,7 +44,9 @@ local function encode_value(val)
         if is_array then
             local parts = {}
             for i = 1, n do
-                table.insert(parts, encode_value(val[i]))
+                -- Per-value pcall: skip/null-out items that can't be encoded
+                local ok, enc = pcall(encode_value, val[i])
+                table.insert(parts, ok and enc or "null")
             end
             return '[' .. table.concat(parts, ',') .. ']'
         else
@@ -51,7 +54,12 @@ local function encode_value(val)
             local parts = {}
             for k, v in pairs(val) do
                 if type(k) == "string" then
-                    table.insert(parts, encode_string(k) .. ':' .. encode_value(v))
+                    local ok, enc = pcall(encode_value, v)
+                    if ok then
+                        table.insert(parts, encode_string(k) .. ':' .. enc)
+                    else
+                        table.insert(parts, encode_string(k) .. ':null')
+                    end
                 end
             end
             if table.getn(parts) == 0 then

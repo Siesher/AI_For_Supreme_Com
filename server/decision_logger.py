@@ -87,6 +87,20 @@ class DecisionLogger:
         prompt_tokens   = len(decision.get("reasoning", "")) // 4
         response_tokens = len(json.dumps(decision)) // 4
 
+        # ReAct iteration details
+        iterations = decision.get("_iterations", [])
+        react_summary = []
+        for it in iterations:
+            react_summary.append({
+                "iter": it.get("iteration_num"),
+                "tools": [tc.get("name") for tc in it.get("tool_calls", [])],
+                "results": [
+                    {"tool": r.get("tool_name"), "ok": r.get("success")}
+                    for r in it.get("tool_results", [])
+                ],
+                "ms": it.get("latency_ms"),
+            })
+
         return {
             "timestamp":          datetime.now(timezone.utc).isoformat(),
             "game_tick":          snapshot.get("tick", 0),
@@ -97,9 +111,10 @@ class DecisionLogger:
             "prompt_tokens":      prompt_tokens,
             "response_tokens":    response_tokens,
             "response_latency_ms": latency_ms,
+            "react_iterations":   react_summary if react_summary else None,
             "decision": {
                 k: v for k, v in decision.items()
-                if not k.startswith("_")  # strip internal metadata fields
+                if not k.startswith("_")
             },
             "fallback_used":      fallback_used,
             "reflex_actions_this_tick": snapshot.get("reflex_actions", []),

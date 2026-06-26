@@ -81,6 +81,9 @@ end
 -- ---------------------------------------------------------------------------
 -- Threat assessment
 -- ---------------------------------------------------------------------------
+-- Enemy units within this world-unit radius of the ACU count as "at my base".
+local NEAR_BASE_RADIUS = 100
+
 local function GetThreats(brain)
     -- Find ACU to get base position
     local acu_list = brain:GetListOfUnits(categories.COMMAND, false, false)
@@ -89,34 +92,46 @@ local function GetThreats(brain)
         base_pos = acu_list[1]:GetPosition()
     end
 
-    local near_base = brain:GetThreatAtPosition(base_pos, 40, true, "Overall") or 0
-    local enemy_threat = 0
+    -- near_base = count of ENEMY mobile COMBAT units within NEAR_BASE_RADIUS of
+    -- the ACU. We count real units (not GetThreatAtPosition "Overall", which at the
+    -- base is dominated by the bot's OWN units/structures and reads ~1000+ even when
+    -- no enemy is near). nearest_enemy_distance tracks the nearest enemy MOBILE unit
+    -- (a raider at the doorstep), not just the enemy ACU.
+    local enemy_near  = 0
+    local enemy_total = 0
     local nearest_dist = 9999
 
-    -- Sample enemy threat across the map
     local enemy_brains = ArmyBrains
     if enemy_brains then
         for _, eb in ipairs(enemy_brains) do
             if eb and eb ~= brain and IsEnemy(brain:GetArmyIndex(), eb:GetArmyIndex()) then
-                local enemy_acu = eb:GetListOfUnits(categories.COMMAND, false, false)
-                if enemy_acu and table.getn(enemy_acu) > 0 then
-                    local ep = enemy_acu[1]:GetPosition()
-                    local dist = VDist3(base_pos, ep)
-                    if dist < nearest_dist then
-                        nearest_dist = dist
+                local ok_u, units = pcall(eb.GetListOfUnits, eb,
+                    categories.MOBILE - categories.ENGINEER - categories.COMMAND, false, false)
+                if ok_u and units then
+                    enemy_total = enemy_total + table.getn(units)
+                    for _, u in ipairs(units) do
+                        if u and not u.Dead then
+                            -- u:GetPosition() is a userdata method; calling it via
+                            -- pcall is robust (type(u.GetPosition)=="function" is NOT
+                            -- reliable on engine userdata and silently skipped every
+                            -- unit, leaving near_base=0 / dist=9999 always).
+                            local ok_p, p = pcall(u.GetPosition, u)
+                            if ok_p and p then
+                                local d = VDist3(base_pos, p)
+                                if d < nearest_dist then nearest_dist = d end
+                                if d < NEAR_BASE_RADIUS then enemy_near = enemy_near + 1 end
+                            end
+                        end
                     end
-                    local enemy_army = eb:GetListOfUnits(
-                        categories.MOBILE - categories.ENGINEER - categories.COMMAND, false, false)
-                    enemy_threat = enemy_threat + ((enemy_army and table.getn(enemy_army)) or 0)
                 end
             end
         end
     end
 
     return {
-        near_base              = math.floor(near_base),
-        nearest_enemy_distance = math.floor(nearest_dist),
-        enemy_army_size_estimate = enemy_threat,
+        near_base                = enemy_near,   -- enemy units AT my base (0 when safe)
+        nearest_enemy_distance   = math.floor(nearest_dist),
+        enemy_army_size_estimate = enemy_total,  -- raw enemy mobile-unit count
     }
 end
 
@@ -124,30 +139,57 @@ end
 -- Map control estimate (percentage of mass points controlled)
 -- ---------------------------------------------------------------------------
 local function GetMapControl(brain)
-    local mass_points = GetAllMassPoints() or {}
-    if table.getn(mass_points) == 0 then return 50 end
+    -- Defensive: any error returns neutral 50%
+    local ok, result = pcall(function()
+        local su_ok, SU = pcall(import, "/lua/sim/scenarioutilities.lua")
+        if not su_ok or not SU or not SU.GetMarkers then return 50 end
 
-    local controlled = 0
-    local army_idx   = brain:GetArmyIndex()
-    for _, mp in ipairs(mass_points) do
-        local extractor_list = GetUnitsInRect(
-            Rect(mp.Position[1] - 5, mp.Position[3] - 5,
-                 mp.Position[1] + 5, mp.Position[3] + 5))
-        if extractor_list then
-            for _, u in ipairs(extractor_list) do
-                if u:GetArmyIndex() == army_idx then
-                    controlled = controlled + 1
-                    break
+        local markers = SU.GetMarkers()
+        if not markers then return 50 end
+
+        local army_idx = brain:GetArmyIndex()
+        local total, controlled = 0, 0
+
+        -- Use pairs — markers is a hash table keyed by marker name
+        for _, marker in pairs(markers) do
+            if type(marker) == "table" and marker.type == 'Mass' and marker.position then
+                total = total + 1
+                local pos = marker.position
+                local ur_ok, units = pcall(GetUnitsInRect,
+                    Rect(pos[1] - 5, pos[3] - 5, pos[1] + 5, pos[3] + 5))
+                if ur_ok and units then
+                    for _, u in ipairs(units) do
+                        if u and not u.Dead and type(u.GetArmyIndex) == "function" then
+                            if u:GetArmyIndex() == army_idx then
+                                controlled = controlled + 1
+                                break
+                            end
+                        end
+                    end
                 end
             end
         end
-    end
-    return math.floor((controlled / table.getn(mass_points)) * 100)
+
+        if total == 0 then return 50 end
+        return math.floor((controlled / total) * 100)
+    end)
+
+    if ok and type(result) == "number" then return result end
+    return 50
 end
 
 -- ---------------------------------------------------------------------------
 -- Public API
 -- ---------------------------------------------------------------------------
+
+-- Sanitize: force value to a clean Lua number or default.
+-- Guards against userdata, NaN, nil, non-numeric types returned by the engine.
+local function N(v, default)
+    if type(v) ~= "number" then return default or 0 end
+    if v ~= v then return default or 0 end  -- NaN
+    if v == math.huge or v == -math.huge then return default or 0 end
+    return v
+end
 
 ---Assemble a complete GameStateSnapshot for the given brain.
 ---@param brain LLMAIBrain

@@ -42,10 +42,10 @@ def test_prompt_contains_game_state(sp):
     assert "Economy" in prompt
     assert "Military" in prompt
 
-def test_prompt_contains_decision_required(sp):
+def test_prompt_contains_phase_and_strategy(sp):
     prompt = sp.build_prompt(_snap(), CFG, [])
-    assert "DECISION REQUIRED" in prompt
-    assert "strategy" in prompt
+    assert "EARLY GAME" in prompt
+    assert "observe" in prompt.lower() or "act" in prompt.lower()
 
 def test_russian_chat_sets_russian_language(sp):
     snap = _snap(player_chat=["Атакуй с севера"])

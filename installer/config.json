@@ -1,15 +1,39 @@
 {
-  "_comment": "SupCom:FA LLM AI Bot — Configuration File",
+  "_comment": "SupCom:FA LLM AI Bot -- Configuration File",
   "_models": {
-    "primary": "qwen3.5:9b — deep strategic decisions",
-    "fast": "qwen3.5:4b — fast/routine decisions"
+    "primary": "Qwen3.5-9B Q4_K_M (KoboldCpp deep) -- newest-gen Qwen dense, native <tool_call> + /no_think, strong Russian; ~6.5 GB leaves headroom for the game + voice STT/TTS",
+    "fast": "qwen3.5:4b -- fast tier for Ollama hot-swap; KoboldCpp serves ONE model, so the 9B fills both deep and fast roles",
+    "notes": "Qwen3.5 has no dense 14B (gap 9B->27B). GGUF: unsloth/Qwen3.5-9B-GGUF or bartowski/Qwen_Qwen3.5-9B-GGUF. Fallback if KoboldCpp build lacks qwen3_5 arch: unsloth/Qwen3-8B-GGUF (same Qwen stack)."
   },
   "llm": {
-    "model_deep": "qwen3.5:9b",
-    "model_fast": "qwen3.5:4b",
-    "base_url": "http://localhost:11434",
+    "engine": "koboldcpp",
+    "_engine_options": "koboldcpp (default) | ollama | ollama_native | lmstudio | vllm | tabbyapi. Change this one key to switch engines.",
+    "engines": {
+      "koboldcpp":     { "api_style": "openai", "base_url": "http://localhost:5001/v1",  "model_deep": "koboldcpp",                    "model_fast": "koboldcpp" },
+      "ollama":        { "api_style": "openai", "base_url": "http://localhost:11434/v1", "model_deep": "qwen3.5:9b",                   "model_fast": "qwen3.5:4b" },
+      "ollama_native": { "api_style": "ollama", "base_url": "http://localhost:11434",    "model_deep": "qwen3.5:9b",                   "model_fast": "qwen3.5:4b" },
+      "lmstudio":      { "api_style": "openai", "base_url": "http://localhost:1234/v1",  "model_deep": "qwen3.5-9b",                   "model_fast": "qwen3.5-4b" },
+      "vllm":          { "api_style": "openai", "base_url": "http://localhost:8000/v1",  "model_deep": "qwen3-14b-nvfp4",             "model_fast": "qwen3-14b-nvfp4" },
+      "tabbyapi":      { "api_style": "openai", "base_url": "http://localhost:5000/v1",  "model_deep": "Qwen3.5-9B-exl3",              "model_fast": "Qwen3.5-4B-exl3" }
+    },
+    "backend": "ollama",
+    "_backend_comment": "Legacy fallback when 'engine' is unset; 'hf_turbo' selects the HF+TurboQuant in-process backend.",
+    "api_key": "not-needed",
     "temperature": 0.3,
-    "max_tokens": 256
+    "max_tokens": 128,
+    "num_ctx": 4096,
+    "num_batch": 512,
+    "keep_alive": "30m",
+    "kv_cache_type": "q8_0",
+    "_kv_cache_comment": "Ollama-native only (api_style=ollama). Ignored by OpenAI engines (configure those at their own launch)."
+  },
+  "turbo_quant": {
+    "_comment": "TurboQuant KV cache settings (only used when backend=hf_turbo)",
+    "key_bits": 3,
+    "value_bits": 3,
+    "outlier_channels": 0,
+    "outlier_bits_extra": 1,
+    "_key_bits_options": "2 (4x compression, lower quality) | 3 (recommended, ~5x vs FP16) | 4 (2.5x, higher quality)"
   },
   "game": {
     "game_path": "C:\\Program Files (x86)\\Supreme Commander",
@@ -22,16 +46,33 @@
     "chat_enabled": true,
     "chat_language": "auto",
     "poll_interval_fast_s": 20,
-    "poll_interval_deep_s": 60
+    "poll_interval_deep_s": 60,
+    "_poll_comment": "Fast intervals -- 4B model is GPU-resident, ~3-5s per query, no game slowdown.",
+    "react_max_iterations": 3,
+    "react_cycle_timeout_s": 30,
+    "decision_memory_size": 10
   },
   "bridge": {
     "pipe_name": "\\\\.\\pipe\\supcom_llm_bridge",
-    "timeout_s": 10
+    "timeout_s": 30,
+    "_timeout_comment": "4B fits in VRAM -- inference is fast; 30s is enough for cold-load + first query."
   },
   "debug": {
     "overlay_enabled": true,
     "log_enabled": true,
     "log_path": "%ProgramData%\\FAForever\\logs\\llm_ai_decisions.log"
+  },
+  "voice": {
+    "enabled": false,
+    "stt":  { "model": "small", "language": "ru", "device": "cpu", "compute_type": "int8",
+              "min_speech_ms": 400, "min_chars": 2 },
+    "tts":  { "engine": "piper", "voice": "ru_RU-irina-medium", "max_pending": 2 },
+    "vad":  { "engine": "silero", "silence_timeout_ms": 800 },
+    "gate": { "mode": "toggle", "mouse_button": "x1" },
+    "echo_guard": true,
+    "input_device": null,
+    "output_device": null,
+    "debug_dump_audio": false
   },
   "version": "1.0.0"
 }

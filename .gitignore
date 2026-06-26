@@ -49,3 +49,10 @@ config.local.json
 
 # FAF mod install artifacts (installed, not source)
 mod_installed/
+
+# Local Claude Code artifacts (per-machine, not source)
+.claude/backups/
+.claude/settings.local.json
+
+# Scratch screenshots
+*.png
