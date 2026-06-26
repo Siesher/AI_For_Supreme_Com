@@ -78,3 +78,43 @@ def test_speak_chat_messages_voice_none_still_appends_history():
         voice=None,
     )
     assert history == [{"role": "bot", "text": "ок"}]
+
+
+def test_speak_chat_messages_dedups_across_decision_and_iterations():
+    # A final-round chat action appears in BOTH decision["tool_calls"] and the
+    # last iteration's tool_calls (react_loop sets final_tool_calls = the last
+    # round's action_calls, and records every round's tool_calls in _iterations).
+    # It must be spoken / appended exactly once, not twice.
+    spoken = []
+    history = []
+
+    class FakeVoice:
+        def speak(self, text):
+            spoken.append(text)
+
+    chat_tc = {"name": "chat", "args": {"message": "иду на север"}}
+    bridge_server._speak_chat_messages(
+        decision={"tool_calls": [chat_tc]},
+        iterations=[{"tool_calls": [{"name": "get_enemy_army", "args": {}}, chat_tc]}],
+        chat_history=history,
+        voice=FakeVoice(),
+    )
+    assert spoken == ["иду на север"]
+    assert history == [{"role": "bot", "text": "иду на север"}]
+
+
+def test_speak_chat_messages_speaks_distinct_messages_from_each_round():
+    # Different chat lines across rounds (e.g. an early-round chat that is not
+    # the final action) must each be spoken once — dedup keys on text, not
+    # position, so distinct messages survive.
+    spoken = []
+    bridge_server._speak_chat_messages(
+        decision={"tool_calls": [{"name": "chat", "args": {"message": "разведка"}}]},
+        iterations=[
+            {"tool_calls": [{"name": "chat", "args": {"message": "строю завод"}}]},
+            {"tool_calls": [{"name": "chat", "args": {"message": "разведка"}}]},
+        ],
+        chat_history=[],
+        voice=type("V", (), {"speak": lambda self, t: spoken.append(t)})(),
+    )
+    assert spoken == ["разведка", "строю завод"]

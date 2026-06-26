@@ -471,15 +471,26 @@ def _speak_chat_messages(
     Mutates *chat_history* in-place (appends). Caller is responsible for
     trimming the list afterward.  When *voice* is None the function behaves
     identically to the old inline loop (history-only, no TTS).
+
+    A ``chat`` call from the final ReAct round appears in BOTH
+    ``decision["tool_calls"]`` (the cycle's final actions) and the last entry
+    of ``iterations`` (which records every round's tool calls). Scanning both
+    is still required because the fallback / single-shot paths populate only
+    ``decision["tool_calls"]`` and leave ``iterations`` empty. We therefore
+    dedup by message text so each distinct message is spoken exactly once.
     """
+    seen: set[str] = set()
 
     def _handle(tc: dict) -> None:
-        if tc.get("name") == "chat":
-            msg_text = tc.get("args", {}).get("message", "")
-            if msg_text:
-                chat_history.append({"role": "bot", "text": msg_text})
-                if voice:
-                    voice.speak(msg_text)
+        if tc.get("name") != "chat":
+            return
+        msg_text = tc.get("args", {}).get("message", "")
+        if not msg_text or msg_text in seen:
+            return
+        seen.add(msg_text)
+        chat_history.append({"role": "bot", "text": msg_text})
+        if voice:
+            voice.speak(msg_text)
 
     for tc in decision.get("tool_calls", []):
         _handle(tc)
